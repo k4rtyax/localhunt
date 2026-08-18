@@ -80,20 +80,6 @@ class OllamaClient:
         resp.raise_for_status()
         return resp
 
-    def chat(
-        self,
-        messages: list[dict],
-        *,
-        temperature: float = 0.2,
-        retries: int = 2,
-    ) -> str:
-        """Single-shot completion. Returns text with reasoning blocks removed."""
-        payload = self._payload(
-            messages, schema=None, temperature=temperature, stream=False
-        )
-        data = self._request_with_retry(payload, retries)
-        return strip_think(data.get("message", {}).get("content", ""))
-
     def chat_json(
         self,
         messages: list[dict],
@@ -117,14 +103,13 @@ class OllamaClient:
                 last_error = f"{e} (response began: {content[:120]!r})"
                 if attempt < retries:
                     time.sleep(0.5 * (attempt + 1))
-                    continue
-                raise LLMError(f"Model did not return valid JSON: {last_error}")
+                continue
 
             if not isinstance(parsed, dict):
                 raise LLMError(f"Expected a JSON object, got {type(parsed).__name__}")
             return parsed
 
-        raise LLMError(last_error or "Unknown JSON failure")
+        raise LLMError(f"Model did not return valid JSON: {last_error}")
 
     def chat_stream(
         self,
@@ -136,9 +121,28 @@ class OllamaClient:
         payload = self._payload(
             messages, schema=None, temperature=temperature, stream=True
         )
+
+        started = False
+        try:
+            for chunk in self._stream(payload):
+                started = True
+                yield chunk
+        except httpx.HTTPStatusError as e:
+            # Same fallback _post() does: older servers reject the think flag.
+            if started or "think" not in payload:
+                raise
+            if "think" not in e.response.text.lower():
+                raise
+            self._supports_think = False
+            payload.pop("think", None)
+            yield from self._stream(payload)
+
+    def _stream(self, payload: dict) -> Generator[str, None, None]:
         with self._client.stream(
             "POST", f"{self.base_url}/api/chat", json=payload
         ) as resp:
+            if resp.status_code >= 400:
+                resp.read()          # so .text is available to the caller
             resp.raise_for_status()
             for line in resp.iter_lines():
                 if not line.strip():

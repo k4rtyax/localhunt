@@ -652,7 +652,6 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
     from modules.llm import OllamaClient
     from modules.orchestrator import Swarm
     from modules.schema import SEVERITY_RANK
-    from modules.textutil import count_tokens
 
     if not filepath and not directory:
         console.print("[red]Specify --file or --dir[/red]")
@@ -710,28 +709,8 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
         rag=rag_engine,
         rag_top_k=top_k,
         concurrency=concurrency or SWARM_CONCURRENCY,
-        verifier_votes=0 if no_verify else (
-            VERIFIER_VOTES if votes is None else votes
-        ),
+        verifier_votes=VERIFIER_VOTES if votes is None else votes,
     )
-
-    tasks = swarm.plan(files, only_agents=list(only_agents) or None, run_all=all_agents)
-    if not tasks:
-        reporter.print_warning("No agent matched these files.")
-        sys.exit(0)
-
-    if not quiet:
-        reporter.print_swarm_plan(
-            {
-                "files": len(files),
-                "agent_calls": len(tasks),
-                "windows": len({(t["file"]["path"], t["start_line"]) for t in tasks}),
-                "code_tokens": sum(count_tokens(f["content"]) for f in files),
-                "context_budget": client.num_ctx,
-            },
-            sorted({t["agent"].name for t in tasks}),
-        )
-
 
     progress = Progress(
         SpinnerColumn(),
@@ -741,22 +720,48 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
         console=console,
         disable=quiet,
     )
-    hunt_task = progress.add_task("[cyan]Hunting", total=len(tasks))
+    hunt_task = progress.add_task("[cyan]Hunting", total=None)
     verify_task = progress.add_task("[cyan]Verifying", total=None, visible=False)
 
     def on_event(ev):
-        if ev.phase == "hunt" and ev.status in ("done", "error"):
+        if ev.phase == "plan" and ev.status == "skip":
+            if not quiet:
+                reporter.print_skipped(ev.file, ev.detail)
+        elif ev.phase == "hunt" and ev.status in ("done", "error"):
             label = f"[cyan]{ev.agent}[/cyan] {ev.file}"
             progress.update(hunt_task, description=label, advance=1)
         elif ev.phase == "sift" and ev.status == "done":
             progress.update(hunt_task, description=f"[cyan]Sifted[/cyan] {ev.detail}")
+            progress.update(verify_task, total=ev.count, completed=0)
         elif ev.phase == "verify" and ev.status == "start":
             progress.update(verify_task, visible=True,
                             description=f"[cyan]skeptic[/cyan] {ev.detail}")
+        elif ev.phase == "verify" and ev.status == "done":
+            progress.advance(verify_task)
         elif ev.phase == "synth" and ev.status == "start":
             progress.update(verify_task, description="[cyan]triage-lead[/cyan] summarising")
 
+    # Attach before plan() runs: plan is what reports files no agent covers.
     swarm.on_event = on_event
+
+    try:
+        tasks = swarm.plan(
+            files, only_agents=list(only_agents) or None, run_all=all_agents
+        )
+    except KeyError as e:
+        reporter.print_error(str(e).strip('"'))
+        sys.exit(1)
+
+    if not tasks:
+        reporter.print_warning("No agent matched these files.")
+        sys.exit(0)
+    progress.update(hunt_task, total=len(tasks))
+
+    if not quiet:
+        reporter.print_swarm_plan(
+            swarm.stats_for(files, tasks),
+            sorted({t["agent"].name for t in tasks}),
+        )
 
     try:
         with progress:

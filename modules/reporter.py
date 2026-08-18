@@ -20,7 +20,6 @@ class Reporter:
     """Handles terminal display and report persistence."""
 
     def __init__(self):
-        self.results: list[dict] = []
         Path(REPORTS_DIR).mkdir(exist_ok=True)
 
     def print_banner(self, model: str, server: str):
@@ -58,6 +57,11 @@ class Reporter:
             f"Analyzing [bold]{filename}[/bold] [dim]({size_str}, mode: {mode}){trunc_note}[/dim]",
             end=""
         )
+
+    def stream_start(self):
+        """Close the open file-header line and start the streamed output block."""
+        console.print()
+        console.print(Rule("[bold]Analysis[/bold]", style="cyan"))
 
     def parse_summary(self, text: str) -> dict:
         """Parse analysis text to extract finding counts and summary points."""
@@ -171,12 +175,6 @@ class Reporter:
 
     def print_warning(self, message: str):
         console.print(f"[{THEME['medium']}]Warning:[/{THEME['medium']}] {message}")
-
-    def print_info(self, message: str):
-        console.print(f"[{THEME['info']}]{message}[/{THEME['info']}]")
-
-    def print_success(self, message: str):
-        console.print(f"[{THEME['success']}]{message}[/{THEME['success']}]")
 
     def save_single_report(
         self,

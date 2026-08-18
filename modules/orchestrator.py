@@ -21,7 +21,6 @@ from modules.agents import (
     AgentSpec, SKEPTIC, SYNTHESIZER, select_agents,
     VERDICT_SCHEMA, SUMMARY_SCHEMA,
 )
-from modules.llm import LLMError
 from modules.schema import Finding, SEVERITIES
 from modules.textutil import (
     count_tokens, number_lines, window_by_lines, normalize_snippet, squash,
@@ -38,6 +37,7 @@ class SwarmEvent:
     agent: str = ""
     file: str = ""
     detail: str = ""
+    count: int = 0      # items this phase produced, where it knows
 
 
 @dataclass
@@ -94,7 +94,10 @@ class Swarm:
         self.concurrency = max(1, concurrency)
         self.verifier_votes = max(0, verifier_votes)
         self.min_confidence = min_confidence
-        self.chunk_tokens = chunk_tokens
+        # RESERVE_OUTPUT_TOKENS is the model's room to answer inside num_ctx;
+        # code windows have to fit in what is left.
+        self.context_budget = max(0, client.num_ctx - RESERVE_OUTPUT_TOKENS)
+        self.chunk_tokens = min(chunk_tokens, max(512, self.context_budget))
         self.on_event = on_event
         self._rag_cache: dict[str, str] = {}
         self._rag_lock = threading.Lock()
@@ -156,6 +159,16 @@ class Swarm:
                 ),
             )
         return tasks
+
+    def stats_for(self, files: list[dict], tasks: list[dict]) -> dict:
+        """The plan numbers, so the CLI panel and the report cannot disagree."""
+        return {
+            "files": len(files),
+            "agent_calls": len(tasks),
+            "windows": len({(t["file"]["path"], t["start_line"]) for t in tasks}),
+            "code_tokens": sum(count_tokens(f["content"]) for f in files),
+            "context_budget": self.context_budget,
+        }
 
     def _rag_context(self, agent: AgentSpec, filename: str) -> str:
         """Retrieve knowledge-base context once per agent, then reuse it."""
@@ -250,7 +263,7 @@ class Swarm:
                     task = futures[fut]
                     try:
                         findings.extend(fut.result())
-                    except (LLMError, Exception) as e:
+                    except Exception as e:
                         self._record_error(
                             f"{task['agent'].name} on {task['file']['name']}: {e}"
                         )
@@ -308,6 +321,7 @@ class Swarm:
         self._emit(
             "sift", "done",
             detail=f"{len(findings)} raw -> {len(out)} unique",
+            count=len(out),
         )
         return out
 
@@ -368,10 +382,16 @@ class Swarm:
         )
 
         if finding.verdict == "real":
-            # Accept a downgrade, ignore an upgrade.
-            adjusted = votes[0]["adjusted_severity"]
-            if adjusted in SEVERITIES:
-                from modules.schema import SEVERITY_RANK
+            # Accept a downgrade, ignore an upgrade. Across several votes take
+            # the harshest severity proposed, so one lenient skeptic cannot
+            # bury a finding on its own.
+            from modules.schema import SEVERITY_RANK
+            proposed = [
+                v["adjusted_severity"] for v in votes
+                if v["real"] and v["adjusted_severity"] in SEVERITIES
+            ]
+            if proposed:
+                adjusted = min(proposed, key=lambda sev: SEVERITY_RANK[sev])
                 if SEVERITY_RANK[adjusted] > finding.rank:
                     finding.severity = adjusted
 
@@ -460,15 +480,7 @@ class Swarm:
         if tasks is None:
             tasks = self.plan(files, only_agents=only_agents, run_all=run_all)
         result.agents_run = sorted({t["agent"].name for t in tasks})
-        result.stats = {
-            "files": len(files),
-            "agent_calls": len(tasks),
-            "windows": len({(t["file"]["path"], t["start_line"]) for t in tasks}),
-            "code_tokens": sum(count_tokens(f["content"]) for f in files),
-            "context_budget": max(
-                0, self.client.num_ctx - RESERVE_OUTPUT_TOKENS
-            ),
-        }
+        result.stats = self.stats_for(files, tasks)
         if not tasks:
             return result
 

@@ -7,7 +7,6 @@ Flow:
   query text    → Ollama nomic-embed-text (Mac) → vector → similarity search ChromaDB
 """
 
-import json
 import hashlib
 import httpx
 import chromadb
@@ -16,7 +15,7 @@ from pathlib import Path
 from typing import List, Tuple
 from config import (
     OLLAMA_BASE_URL, EMBEDDING_MODEL, CHROMA_DB_DIR,
-    REQUEST_TIMEOUT, RAG_TOP_K, CHUNK_SIZE, CHUNK_OVERLAP
+    REQUEST_TIMEOUT, RAG_TOP_K
 )
 
 
@@ -131,7 +130,6 @@ class RAGEngine:
         self,
         query: str,
         top_k: int = RAG_TOP_K,
-        source_filter: str | None = None,
     ) -> List[Tuple[str, str, float]]:
         """
         Search for relevant chunks.
@@ -139,13 +137,10 @@ class RAGEngine:
         """
         query_vector = self.embed(query)
 
-        where = {"source": source_filter} if source_filter else None
-
         results = self._collection.query(
             query_embeddings=[query_vector],
             n_results=min(top_k, max(self.count(), 1)),
             include=["documents", "metadatas", "distances"],
-            where=where,
         )
 
         output = []

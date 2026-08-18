@@ -12,6 +12,12 @@ from config import DEFAULT_EXTENSIONS, MAX_FILE_SIZE
 class Scanner:
     """Discovers and reads files for analysis."""
 
+    SKIP_DIRS = {
+        "node_modules", ".git", ".svn", "dist", "build",
+        "__pycache__", ".cache", "vendor", ".idea", ".vscode",
+        "coverage", ".nyc_output", "bower_components",
+    }
+
     def __init__(
         self,
         extensions: list[str] | None = None,
@@ -28,17 +34,20 @@ class Scanner:
         path = Path(path)
 
         if not path.exists():
-            return {"error": f"File tidak ditemukan: {path}"}
+            return {"path": str(path), "error": f"File tidak ditemukan: {path}"}
 
         if not path.is_file():
-            return {"error": f"Bukan file: {path}"}
+            return {"path": str(path), "error": f"Bukan file: {path}"}
+
+        if self.is_binary(path):
+            return {"path": str(path), "error": "Binary file, skipped"}
 
         size = path.stat().st_size
 
         try:
             content = path.read_text(encoding="utf-8", errors="replace")
         except Exception as e:
-            return {"error": f"Gagal membaca file: {e}"}
+            return {"path": str(path), "error": f"Gagal membaca file: {e}"}
 
         truncated = False
         if len(content.encode("utf-8")) > self.max_size:
@@ -58,46 +67,48 @@ class Scanner:
             "error": None,
         }
 
-    def scan_directory(
+    def iter_paths(
         self,
         directory: str | Path,
         recursive: bool = True,
-    ) -> Iterator[dict]:
+    ) -> Iterator[Path]:
         """
-        Scan a directory and yield file info dicts.
+        Yield the paths that match the extension filter, without reading them.
         Skips hidden dirs, node_modules, .git, dist, etc.
         """
         directory = Path(directory)
-        SKIP_DIRS = {
-            "node_modules", ".git", ".svn", "dist", "build",
-            "__pycache__", ".cache", "vendor", ".idea", ".vscode",
-            "coverage", ".nyc_output", "bower_components",
-        }
 
         if recursive:
             for root, dirs, files in os.walk(directory):
                 # Skip unwanted directories (modify in-place)
                 dirs[:] = [
                     d for d in dirs
-                    if d not in SKIP_DIRS and not d.startswith(".")
+                    if d not in self.SKIP_DIRS and not d.startswith(".")
                 ]
 
                 for filename in files:
                     filepath = Path(root) / filename
                     if filepath.suffix.lower() in self.extensions:
-                        result = self.scan_file(filepath)
-                        if result:
-                            yield result
+                        yield filepath
         else:
             for filepath in directory.iterdir():
                 if filepath.is_file() and filepath.suffix.lower() in self.extensions:
-                    result = self.scan_file(filepath)
-                    if result:
-                        yield result
+                    yield filepath
+
+    def scan_directory(
+        self,
+        directory: str | Path,
+        recursive: bool = True,
+    ) -> Iterator[dict]:
+        """Scan a directory and yield file info dicts."""
+        for filepath in self.iter_paths(directory, recursive):
+            result = self.scan_file(filepath)
+            if result:
+                yield result
 
     def count_files(self, directory: str | Path, recursive: bool = True) -> int:
         """Count how many files will be scanned (for progress bar)."""
-        return sum(1 for _ in self.scan_directory(directory, recursive))
+        return sum(1 for _ in self.iter_paths(directory, recursive))
 
     @staticmethod
     def is_binary(filepath: Path) -> bool:

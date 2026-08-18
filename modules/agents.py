@@ -402,8 +402,13 @@ a guarantee.
 AGENTS: dict[str, AgentSpec] = {a.name: a for a in FINDERS}
 AGENT_NAMES: list[str] = list(AGENTS)
 
-VERDICT_SCHEMA = VERDICT_SCHEMA
-SUMMARY_SCHEMA = SUMMARY_SCHEMA
+# VERDICT_SCHEMA and SUMMARY_SCHEMA are imported above and re-exported here so
+# the orchestrator can take an agent and its schema from the same module.
+__all__ = [
+    "AgentSpec", "FINDERS", "SKEPTIC", "SYNTHESIZER", "AGENTS", "AGENT_NAMES",
+    "FINDINGS_SCHEMA", "VERDICT_SCHEMA", "SUMMARY_SCHEMA",
+    "get_agent", "select_agents",
+]
 
 
 def get_agent(name: str) -> AgentSpec:

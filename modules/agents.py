@@ -380,9 +380,20 @@ Set "real": true when the shown code does contain the flaw - INCLUDING when:
 - You cannot see the caller. Say so in "reason" and lower the severity.
 - The project looks small, unfinished, or not production code.
 
-Never refute a finding on the grounds that the file is "only a test", "a
-sample", or "not a real application" - that is a judgement about context, and
-"adjusted_severity" is where context belongs. Judge the code in front of you.
+Do not name the vendor a credential belongs to unless the prefix is one you
+are certain of. Which company issued a key has no bearing on whether it is
+hardcoded, and a wrong guess makes the whole verdict untrustworthy.
+
+Before you answer false, read your own "reason" back. If it leans on ANY of
+the following, the correct answer is true with a lowered "adjusted_severity":
+
+  - the file is a demo, sample, test, fixture, or example
+  - the project is small, unfinished, or not production code
+  - the code is deliberately vulnerable
+
+Those are statements about context, not about the code. A refutation resting
+on them is discarded automatically and the finding is kept for a human to
+read, so answering false on those grounds gains nothing.
 
 When the technical claim is genuinely ambiguous, answer false and explain what
 extra code you would need to see. Put your real reasoning in "reason".

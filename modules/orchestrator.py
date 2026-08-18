@@ -8,6 +8,7 @@ lokalHunt - Swarm orchestrator
     SYNTH  one triage pass writes the executive summary
 """
 
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -26,6 +27,32 @@ from modules.textutil import (
     count_tokens, number_lines, window_by_lines, normalize_snippet, squash,
     truncate,
 )
+
+
+# Grounds the skeptic is told to put in adjusted_severity, never in the
+# verdict. qwen3:4b breaks that rule in practice, so the rule is enforced here
+# instead of trusted to the prompt. These match claims about the FILE, not
+# about a value: "documentation sample key" is a legitimate refutation, while
+# "this file is a sample" is not.
+_OUT_OF_BOUNDS = re.compile(
+    r"(?:"
+    r"(?:file|code|script|snippet|project|app|application|repo\w*)\s+(?:is|are|looks?|seems?|appears?)"
+    r"\s+(?:like\s+)?(?:a|an)?\s*(?:demo|sample|example|test|mock|dummy|practice|exercise)"
+    r"|(?:demo|sample|example|test|mock|dummy|practice|training)\s+"
+    r"(?:file|code|script|snippet|project|app|application|repo\w*|environment)"
+    r"|not\s+(?:a\s+)?real\s+(?:app|application|project|codebase|code|system)"
+    r"|not\s+(?:intended\s+for\s+)?production"
+    r"|non-production"
+    r"|(?:intentionally|deliberately|purposely)\s+vulnerable"
+    r"|for\s+(?:demonstration|educational|learning|teaching)\s+purposes"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def refuses_on_context(reason: str) -> bool:
+    """True when a refutation rests on what the file IS rather than what it does."""
+    return bool(_OUT_OF_BOUNDS.search(reason or ""))
 
 
 @dataclass
@@ -94,6 +121,7 @@ class Swarm:
         self.concurrency = max(1, concurrency)
         self.verifier_votes = max(0, verifier_votes)
         self.min_confidence = min_confidence
+        self.verify_overrides = 0
         # RESERVE_OUTPUT_TOKENS is the model's room to answer inside num_ctx;
         # code windows have to fit in what is left.
         self.context_budget = max(0, client.num_ctx - RESERVE_OUTPUT_TOKENS)
@@ -396,14 +424,34 @@ class Swarm:
             "",
         )
 
-        if finding.verdict == "real":
+        if finding.verdict == "refuted":
+            rejected = [
+                v for v in votes
+                if not v["real"] and refuses_on_context(v["reason"])
+            ]
+            if rejected:
+                for v in rejected:
+                    v["policy_override"] = True
+                finding.verdict = "unverified"
+                finding.verdict_reason = (
+                    "Refuted on out-of-bounds grounds (what the file is, not "
+                    "what the code does), so the refutation was discarded and "
+                    "this finding is kept for a human. Verifier said: "
+                    + truncate(rejected[0]["reason"], 240)
+                )
+
+        if finding.verdict in ("real", "unverified"):
             # Accept a downgrade, ignore an upgrade. Across several votes take
             # the harshest severity proposed, so one lenient skeptic cannot
             # bury a finding on its own.
             from modules.schema import SEVERITY_RANK
+            # An overridden refutation still carries the severity the verifier
+            # thought fit. That is where its context judgement belonged, so
+            # honour it rather than discarding the whole vote.
             proposed = [
                 v["adjusted_severity"] for v in votes
-                if v["real"] and v["adjusted_severity"] in SEVERITIES
+                if (v["real"] or v.get("policy_override"))
+                and v["adjusted_severity"] in SEVERITIES
             ]
             if proposed:
                 adjusted = min(proposed, key=lambda sev: SEVERITY_RANK[sev])
@@ -423,6 +471,7 @@ class Swarm:
 
         confirmed: list[Finding] = []
         refuted: list[Finding] = []
+        self.verify_overrides = 0
 
         with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
             futures = {
@@ -440,12 +489,19 @@ class Swarm:
                         finding.verdict_reason = f"verifier failed: {e}"
                         confirmed.append(finding)
                         continue
-                    (confirmed if result.verdict == "real" else refuted).append(result)
+                    if result.verdict in ("real", "unverified"):
+                        confirmed.append(result)
+                    else:
+                        refuted.append(result)
             except KeyboardInterrupt:
                 for fut in futures:
                     fut.cancel()
                 raise
 
+        self.verify_overrides = sum(
+            1 for f in confirmed
+            if any(v.get("policy_override") for v in f.votes)
+        )
         confirmed.sort(key=lambda f: (f.rank, -f.confidence, f.file, f.line))
         refuted.sort(key=lambda f: (f.rank, f.file, f.line))
         return confirmed, refuted
@@ -513,6 +569,8 @@ class Swarm:
         result.refuted = refuted
         result.stats["confirmed"] = len(confirmed)
         result.stats["refuted"] = len(refuted)
+        if verify and self.verify_overrides:
+            result.stats["verify_overridden"] = self.verify_overrides
 
         if synthesize:
             result.summary = self.synthesize(confirmed, files)

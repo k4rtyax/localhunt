@@ -1,11 +1,18 @@
 """
 Configuration settings for lokalHunt.
+
+Network values can be overridden with LOKALHUNT_HOST, LOKALHUNT_PORT, or
+OLLAMA_BASE_URL. The default assumes an SSH tunnel to the Ollama host:
+    ssh -N -L 11434:127.0.0.1:11434 user@host
 """
 
-# Network configuration
-MAC_IP = "192.168.1.5"
-OLLAMA_PORT = 11434
-OLLAMA_BASE_URL = f"http://{MAC_IP}:{OLLAMA_PORT}"
+import os
+
+# `set-host` rewrites DEFAULT_HOST.
+DEFAULT_HOST = "127.0.0.1"
+MAC_IP = os.getenv("LOKALHUNT_HOST", DEFAULT_HOST)
+OLLAMA_PORT = int(os.getenv("LOKALHUNT_PORT", "11434"))
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL") or f"http://{MAC_IP}:{OLLAMA_PORT}"
 
 # Model configuration
 DEFAULT_MODEL = "qwen3:4b"
@@ -51,3 +58,31 @@ THEME = {
     "model": "bold magenta",
     "rag": "bold green",
 }
+
+
+# Ollama allocates NUM_CTX * OLLAMA_NUM_PARALLEL of KV cache. For qwen3:4b
+# that is roughly 1.2 GB per slot at 8192, on top of the 2.5 GB model.
+NUM_CTX = 8192
+
+# Tokens reserved for the model's own answer inside NUM_CTX.
+RESERVE_OUTPUT_TOKENS = 2048
+
+# Max code tokens per request. Larger files are split into overlapping
+# line windows.
+CHUNK_TOKENS = 2000
+CHUNK_OVERLAP_LINES = 12
+
+# Keep aligned with OLLAMA_NUM_PARALLEL and the KV cache budget above.
+SWARM_CONCURRENCY = 2
+
+# Skeptic verifiers per finding. Use an odd number for a clean majority.
+VERIFIER_VOTES = 1
+
+# Findings below this confidence are dropped before the verify phase.
+MIN_CONFIDENCE = 0.35
+
+# Keep the model resident between agent calls.
+KEEP_ALIVE = "10m"
+
+# qwen3 emits <think> blocks. Disable server-side, strip whatever remains.
+DISABLE_THINKING = True

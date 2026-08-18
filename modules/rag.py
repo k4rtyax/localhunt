@@ -1,5 +1,5 @@
 """
-lokalHunt — RAG Engine
+lokalHunt - RAG Engine
 Handles embeddings (via Ollama on Mac) and vector search (via ChromaDB local).
 
 Flow:
@@ -49,9 +49,6 @@ class RAGEngine:
             metadata={"hnsw:space": "cosine"},
         )
 
-    # ──────────────────────────────────────────
-    #  EMBEDDING
-    # ──────────────────────────────────────────
     def embed(self, text: str) -> List[float]:
         """
         Get embedding vector from Ollama (nomic-embed-text on Mac).
@@ -72,9 +69,6 @@ class RAGEngine:
         """Embed multiple texts. Returns list of vectors."""
         return [self.embed(t) for t in texts]
 
-    # ──────────────────────────────────────────
-    #  DOCUMENT MANAGEMENT
-    # ──────────────────────────────────────────
     def add_chunks(
         self,
         chunks: List[str],
@@ -133,9 +127,6 @@ class RAGEngine:
         if results["ids"]:
             self._collection.delete(ids=results["ids"])
 
-    # ──────────────────────────────────────────
-    #  SEARCH
-    # ──────────────────────────────────────────
     def search(
         self,
         query: str,
@@ -202,9 +193,6 @@ class RAGEngine:
         lines.append("---\n")
         return "\n".join(lines)
 
-    # ──────────────────────────────────────────
-    #  STATS
-    # ──────────────────────────────────────────
     def count(self) -> int:
         """Total chunks in the vector store."""
         return self._collection.count()

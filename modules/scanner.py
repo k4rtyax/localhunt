@@ -1,5 +1,5 @@
 """
-lokalHunt — Scanner Module
+lokalHunt - Scanner Module
 Handles file discovery and content reading.
 """
 

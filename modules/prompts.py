@@ -1,5 +1,5 @@
 """
-lokalHunt — Prompts Module
+lokalHunt - Prompts Module
 System prompts for target code analysis modes.
 """
 

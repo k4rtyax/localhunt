@@ -1,0 +1,497 @@
+"""
+lokalHunt - Swarm orchestrator
+
+    PLAN   pick agents per file from extension + pre-scan signals
+    HUNT   run every (agent x window) pair concurrently against Ollama
+    SIFT   drop low confidence, check evidence exists, deduplicate
+    VERIFY spawn skeptics per finding; majority vote decides
+    SYNTH  one triage pass writes the executive summary
+"""
+
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from typing import Callable
+
+from config import (
+    CHUNK_TOKENS, CHUNK_OVERLAP_LINES, SWARM_CONCURRENCY,
+    VERIFIER_VOTES, MIN_CONFIDENCE, RESERVE_OUTPUT_TOKENS,
+)
+from modules.agents import (
+    AgentSpec, SKEPTIC, SYNTHESIZER, select_agents,
+    VERDICT_SCHEMA, SUMMARY_SCHEMA,
+)
+from modules.llm import LLMError
+from modules.schema import Finding, SEVERITIES
+from modules.textutil import (
+    count_tokens, number_lines, window_by_lines, normalize_snippet, squash,
+    truncate,
+)
+
+
+@dataclass
+class SwarmEvent:
+    """Progress signal emitted as the run proceeds."""
+
+    phase: str          # plan | hunt | sift | verify | synth
+    status: str         # start | done | error | skip
+    agent: str = ""
+    file: str = ""
+    detail: str = ""
+
+
+@dataclass
+class SwarmResult:
+    findings: list[Finding] = field(default_factory=list)
+    refuted: list[Finding] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
+    agents_run: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    summary: dict = field(default_factory=dict)
+    stats: dict = field(default_factory=dict)
+
+    def counts(self) -> dict[str, int]:
+        counts = {s: 0 for s in SEVERITIES}
+        for f in self.findings:
+            counts[f.severity] = counts.get(f.severity, 0) + 1
+        return counts
+
+    def worst_severity(self) -> str | None:
+        return min(self.findings, key=lambda f: f.rank).severity if self.findings else None
+
+    def to_dict(self) -> dict:
+        return {
+            "files": self.files,
+            "agents_run": self.agents_run,
+            "counts": self.counts(),
+            "worst_severity": self.worst_severity(),
+            "summary": self.summary,
+            "stats": self.stats,
+            "findings": [f.to_dict() for f in self.findings],
+            "refuted": [f.to_dict() for f in self.refuted],
+            "errors": self.errors,
+        }
+
+
+class Swarm:
+    """Runs a fleet of specialist agents against one or more files."""
+
+    def __init__(
+        self,
+        client,
+        *,
+        rag=None,
+        rag_top_k: int = 3,
+        concurrency: int = SWARM_CONCURRENCY,
+        verifier_votes: int = VERIFIER_VOTES,
+        min_confidence: float = MIN_CONFIDENCE,
+        chunk_tokens: int = CHUNK_TOKENS,
+        on_event: Callable[[SwarmEvent], None] | None = None,
+    ):
+        self.client = client
+        self.rag = rag
+        self.rag_top_k = rag_top_k
+        self.concurrency = max(1, concurrency)
+        self.verifier_votes = max(0, verifier_votes)
+        self.min_confidence = min_confidence
+        self.chunk_tokens = chunk_tokens
+        self.on_event = on_event
+        self._rag_cache: dict[str, str] = {}
+        self._rag_lock = threading.Lock()
+        self._errors_lock = threading.Lock()
+        self._errors: list[str] = []
+
+    def _emit(self, phase: str, status: str, **kw):
+        if self.on_event:
+            self.on_event(SwarmEvent(phase=phase, status=status, **kw))
+
+    def plan(
+        self,
+        files: list[dict],
+        *,
+        only_agents: list[str] | None = None,
+        run_all: bool = False,
+    ) -> list[dict]:
+        """
+        Build the task list: one entry per (file window x relevant agent).
+
+        Windows carry absolute line numbers, so a finding inside a window still
+        points at the right line of the whole file.
+        """
+        tasks: list[dict] = []
+        for info in files:
+            content = info["content"]
+            agents = select_agents(
+                content,
+                info.get("extension", ""),
+                only=only_agents,
+                run_all=run_all,
+            )
+            if not agents:
+                self._emit(
+                    "plan", "skip", file=info["name"],
+                    detail="no agent matches this file type",
+                )
+                continue
+
+            windows = list(
+                window_by_lines(content, self.chunk_tokens, CHUNK_OVERLAP_LINES)
+            )
+            for agent, signals in agents:
+                for start_line, chunk in windows:
+                    tasks.append({
+                        "agent": agent,
+                        "file": info,
+                        "start_line": start_line,
+                        "chunk": chunk,
+                        "signals": signals,
+                        "window_count": len(windows),
+                    })
+
+            self._emit(
+                "plan", "done", file=info["name"],
+                detail=(
+                    f"{len(agents)} agents x {len(windows)} window(s): "
+                    + ", ".join(a.name for a, _ in agents)
+                ),
+            )
+        return tasks
+
+    def _rag_context(self, agent: AgentSpec, filename: str) -> str:
+        """Retrieve knowledge-base context once per agent, then reuse it."""
+        if not self.rag or not agent.rag_query:
+            return ""
+        with self._rag_lock:
+            if agent.name in self._rag_cache:
+                return self._rag_cache[agent.name]
+        try:
+            ctx = self.rag.format_context(agent.rag_query, top_k=self.rag_top_k) or ""
+        except Exception as e:
+            self._record_error(f"RAG lookup failed for {agent.name}: {e}")
+            ctx = ""
+        with self._rag_lock:
+            self._rag_cache[agent.name] = ctx
+        return ctx
+
+    def _hunt_one(self, task: dict) -> list[Finding]:
+        agent: AgentSpec = task["agent"]
+        info = task["file"]
+        start_line = task["start_line"]
+        chunk = task["chunk"]
+
+        window_note = ""
+        if task["window_count"] > 1:
+            end_line = start_line + len(chunk.splitlines()) - 1
+            window_note = (
+                f"\nThis is a PARTIAL view: lines {start_line}-{end_line} of "
+                f"{len(info['content'].splitlines())}. Judge only what is here.\n"
+            )
+
+        leads = ""
+        if task["signals"]:
+            leads = (
+                "\nA regex pre-scan flagged these patterns in this file. Check "
+                "each one, and keep looking beyond them:\n"
+                + "\n".join(f"  - {s}" for s in task["signals"][:8])
+                + "\n"
+            )
+
+        system = agent.system_prompt
+        rag_ctx = self._rag_context(agent, info["name"])
+        if rag_ctx:
+            system = f"{system}\n\n{rag_ctx}"
+
+        user = (
+            f"File: {info['name']}\n"
+            f"Type: {info.get('extension') or 'unknown'}\n"
+            f"{window_note}{leads}\n"
+            f"Source (the number before each | is the real line number):\n"
+            f"```\n{number_lines(chunk, start=start_line)}\n```"
+        )
+
+        self._emit("hunt", "start", agent=agent.name, file=info["name"])
+
+        data = self.client.chat_json(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            agent.schema,
+            temperature=agent.temperature,
+        )
+
+        max_line = len(info["content"].splitlines())
+        findings: list[Finding] = []
+        for raw in data.get("findings") or []:
+            if not isinstance(raw, dict):
+                continue
+            f = Finding.from_model(
+                raw, agent=agent.name, file=info["path"], max_line=max_line
+            )
+            if f is not None:
+                findings.append(f)
+
+        self._emit(
+            "hunt", "done", agent=agent.name, file=info["name"],
+            detail=f"{len(findings)} raw",
+        )
+        return findings
+
+    def hunt(self, tasks: list[dict]) -> list[Finding]:
+        """Run every planned task concurrently."""
+        findings: list[Finding] = []
+        if not tasks:
+            return findings
+
+        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
+            futures = {pool.submit(self._hunt_one, t): t for t in tasks}
+            try:
+                for fut in as_completed(futures):
+                    task = futures[fut]
+                    try:
+                        findings.extend(fut.result())
+                    except (LLMError, Exception) as e:
+                        self._record_error(
+                            f"{task['agent'].name} on {task['file']['name']}: {e}"
+                        )
+                        self._emit(
+                            "hunt", "error", agent=task["agent"].name,
+                            file=task["file"]["name"], detail=str(e),
+                        )
+            except KeyboardInterrupt:
+                for fut in futures:
+                    fut.cancel()
+                raise
+        return findings
+
+    def sift(self, findings: list[Finding], files: list[dict]) -> list[Finding]:
+        """
+        Narrow deterministically: drop anything under the confidence floor,
+        mark findings whose evidence is absent from the source, and collapse
+        duplicates reported by several agents or windows.
+        """
+        by_path = {f["path"]: f["content"] for f in files}
+        kept: list[Finding] = []
+
+        for f in findings:
+            if f.confidence < self.min_confidence:
+                continue
+            source = by_path.get(f.file, "")
+            if f.evidence and source:
+                needle = normalize_snippet(f.evidence)
+                haystack = normalize_snippet(source)
+                if len(needle) >= 8 and needle not in haystack:
+                    # The model may have reflowed the statement while quoting.
+                    if squash(f.evidence) not in squash(source):
+                        f.unverified_evidence = True
+                        f.confidence = min(f.confidence, 0.4)
+            kept.append(f)
+
+        merged: dict[tuple, Finding] = {}
+        for f in kept:
+            key = f.dedupe_key()
+            existing = merged.get(key)
+            if existing is None:
+                merged[key] = f
+                continue
+            winner, loser = (
+                (f, existing)
+                if (f.rank, -f.confidence) < (existing.rank, -existing.confidence)
+                else (existing, f)
+            )
+            agents = {a for a in (winner.agent + "," + loser.agent).split(",") if a}
+            winner.agent = ",".join(sorted(agents))
+            merged[key] = winner
+
+        out = list(merged.values())
+        out.sort(key=lambda f: (f.rank, -f.confidence, f.file, f.line))
+        self._emit(
+            "sift", "done",
+            detail=f"{len(findings)} raw -> {len(out)} unique",
+        )
+        return out
+
+    def _context_around(self, finding: Finding, files: list[dict], radius: int = 20) -> str:
+        for info in files:
+            if info["path"] == finding.file:
+                lines = info["content"].splitlines()
+                start = max(1, finding.line - radius)
+                end = min(len(lines), finding.line + radius)
+                excerpt = "\n".join(lines[start - 1:end])
+                return number_lines(excerpt, start=start)
+        return ""
+
+    def _verify_one(self, finding: Finding, files: list[dict]) -> Finding:
+        context = self._context_around(finding, files)
+        prompt = (
+            f"Finding reported by {finding.agent}:\n"
+            f"  Title      : {finding.title}\n"
+            f"  Severity   : {finding.severity}\n"
+            f"  Category   : {finding.category}\n"
+            f"  Location   : {finding.file}:{finding.line}\n"
+            f"  Evidence   : {truncate(finding.evidence, 400)}\n"
+            f"  Impact     : {truncate(finding.impact, 300)}\n"
+            + (
+                "  NOTE       : the quoted evidence was NOT found in the source "
+                "file. Treat this as a strong sign of a fabricated finding.\n"
+                if finding.unverified_evidence else ""
+            )
+            + f"\nSurrounding code:\n```\n{context}\n```\n\n"
+            "Refute this finding if you can."
+        )
+
+        self._emit("verify", "start", agent=SKEPTIC.name, file=finding.file,
+                   detail=truncate(finding.title, 50))
+
+        votes: list[dict] = []
+        for _ in range(self.verifier_votes):
+            data = self.client.chat_json(
+                [
+                    {"role": "system", "content": SKEPTIC.system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                VERDICT_SCHEMA,
+                temperature=SKEPTIC.temperature,
+            )
+            votes.append({
+                "real": bool(data.get("real")),
+                "reason": str(data.get("reason") or "").strip(),
+                "adjusted_severity": str(data.get("adjusted_severity") or "").lower(),
+            })
+
+        finding.votes = votes
+        real_votes = sum(1 for v in votes if v["real"])
+        finding.verdict = "real" if real_votes * 2 > len(votes) else "refuted"
+        finding.verdict_reason = next(
+            (v["reason"] for v in votes if v["real"] == (finding.verdict == "real")),
+            "",
+        )
+
+        if finding.verdict == "real":
+            # Accept a downgrade, ignore an upgrade.
+            adjusted = votes[0]["adjusted_severity"]
+            if adjusted in SEVERITIES:
+                from modules.schema import SEVERITY_RANK
+                if SEVERITY_RANK[adjusted] > finding.rank:
+                    finding.severity = adjusted
+
+        self._emit("verify", "done", agent=SKEPTIC.name, file=finding.file,
+                   detail=f"{finding.verdict}: {truncate(finding.title, 40)}")
+        return finding
+
+    def verify(
+        self, findings: list[Finding], files: list[dict]
+    ) -> tuple[list[Finding], list[Finding]]:
+        """Adversarially verify each finding. Returns (confirmed, refuted)."""
+        if not findings or self.verifier_votes == 0:
+            return findings, []
+
+        confirmed: list[Finding] = []
+        refuted: list[Finding] = []
+
+        with ThreadPoolExecutor(max_workers=self.concurrency) as pool:
+            futures = {
+                pool.submit(self._verify_one, f, files): f for f in findings
+            }
+            try:
+                for fut in as_completed(futures):
+                    finding = futures[fut]
+                    try:
+                        result = fut.result()
+                    except Exception as e:
+                        # A verifier crash must not delete the finding.
+                        self._record_error(f"verify {finding.title}: {e}")
+                        finding.verdict = "unverified"
+                        finding.verdict_reason = f"verifier failed: {e}"
+                        confirmed.append(finding)
+                        continue
+                    (confirmed if result.verdict == "real" else refuted).append(result)
+            except KeyboardInterrupt:
+                for fut in futures:
+                    fut.cancel()
+                raise
+
+        confirmed.sort(key=lambda f: (f.rank, -f.confidence, f.file, f.line))
+        refuted.sort(key=lambda f: (f.rank, f.file, f.line))
+        return confirmed, refuted
+
+    def synthesize(self, findings: list[Finding], files: list[dict]) -> dict:
+        listing = "\n".join(
+            f"- [{f.severity}] {f.title} ({f.file}:{f.line}) "
+            f"- {truncate(f.impact, 160)}"
+            for f in findings[:40]
+        ) or "(no findings survived verification)"
+
+        prompt = (
+            f"Files scanned: {', '.join(f['name'] for f in files[:20])}\n"
+            f"Confirmed findings: {len(findings)}\n\n{listing}"
+        )
+
+        self._emit("synth", "start", agent=SYNTHESIZER.name)
+        try:
+            data = self.client.chat_json(
+                [
+                    {"role": "system", "content": SYNTHESIZER.system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                SUMMARY_SCHEMA,
+                temperature=SYNTHESIZER.temperature,
+            )
+        except Exception as e:
+            self._record_error(f"synthesis failed: {e}")
+            self._emit("synth", "error", agent=SYNTHESIZER.name, detail=str(e))
+            return {}
+        self._emit("synth", "done", agent=SYNTHESIZER.name)
+        return data
+
+    def run(
+        self,
+        files: list[dict],
+        *,
+        only_agents: list[str] | None = None,
+        run_all: bool = False,
+        verify: bool = True,
+        synthesize: bool = True,
+        tasks: list[dict] | None = None,
+    ) -> SwarmResult:
+        result = SwarmResult(files=[f["name"] for f in files])
+        self._errors = result.errors
+
+        if tasks is None:
+            tasks = self.plan(files, only_agents=only_agents, run_all=run_all)
+        result.agents_run = sorted({t["agent"].name for t in tasks})
+        result.stats = {
+            "files": len(files),
+            "agent_calls": len(tasks),
+            "windows": len({(t["file"]["path"], t["start_line"]) for t in tasks}),
+            "code_tokens": sum(count_tokens(f["content"]) for f in files),
+            "context_budget": max(
+                0, self.client.num_ctx - RESERVE_OUTPUT_TOKENS
+            ),
+        }
+        if not tasks:
+            return result
+
+        raw = self.hunt(tasks)
+        result.stats["raw_findings"] = len(raw)
+
+        sifted = self.sift(raw, files)
+        result.stats["unique_findings"] = len(sifted)
+
+        if verify:
+            confirmed, refuted = self.verify(sifted, files)
+        else:
+            confirmed, refuted = sifted, []
+        result.findings = confirmed
+        result.refuted = refuted
+        result.stats["confirmed"] = len(confirmed)
+        result.stats["refuted"] = len(refuted)
+
+        if synthesize:
+            result.summary = self.synthesize(confirmed, files)
+
+        return result
+
+    def _record_error(self, message: str):
+        with self._errors_lock:
+            self._errors.append(message)

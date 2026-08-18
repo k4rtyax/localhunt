@@ -92,6 +92,76 @@ python hunt.py chat --rag
 
 ---
 
+## Agent Swarm
+
+`swarm` replaces the single "find everything" prompt with a fleet of narrow
+specialists, then spends most of its effort deleting their mistakes. On a 4B
+model the narrowing matters more than the fan-out.
+
+```
+PLAN    pick agents per file from extension + a regex pre-scan
+HUNT    every (agent x window) pair runs concurrently, structured JSON out
+SIFT    confidence floor, evidence must exist in the source, dedupe
+VERIFY  an adversarial skeptic tries to refute each finding
+SYNTH   one triage pass writes the summary
+```
+
+```powershell
+python hunt.py agents                                  # list the specialists
+python hunt.py swarm -f target.js                      # auto-select agents
+python hunt.py swarm -d .\webapp --ext .js --ext .php
+python hunt.py swarm -f app.py -a secrets-hunter -a sqli-hunter
+python hunt.py swarm -f app.js --stdout-json           # for scripts and CI
+python hunt.py swarm -d .\src --fail-on high           # exit 2 on high+
+```
+
+| Agent | Covers |
+|---|---|
+| `secrets-hunter` | Hardcoded keys, tokens, connection strings, private keys |
+| `xss-hunter` | DOM/reflected XSS sources and sinks, prototype pollution |
+| `sqli-hunter` | SQL/NoSQL injection, unsafe query construction |
+| `rce-hunter` | Command injection, SSRF, path traversal, deserialization |
+| `authz-auditor` | Broken access control, IDOR, JWT handling, mass assignment |
+| `crypto-auditor` | Weak hashes and ciphers, predictable randomness, TLS bypass |
+| `config-auditor` | Permissive CORS, debug mode, cookie flags, IAM wildcards |
+| `endpoint-mapper` | Attack-surface recon: routes, hosts, buckets, debug paths |
+| `deobfuscator` | Packed scripts, skimmers, exfiltration channels |
+| `skeptic` | Adversarial verifier - refutes findings the finders produced |
+| `triage-lead` | Merges what survived into an executive summary |
+
+Every finding carries `verdict`, `confidence`, and `unverified_evidence` - the
+last one flags a citation that could not be located in the source file, which
+is the cheapest way to catch a model that invented its evidence.
+
+Reports are written to `reports/` as paired `.md` and `.json`. That directory
+is gitignored: findings routinely contain live secrets.
+
+### Resource notes
+
+Ollama allocates `num_ctx x OLLAMA_NUM_PARALLEL` of KV cache on top of the
+model. For `qwen3:4b` that is roughly 1.2 GB per parallel slot at the default
+`NUM_CTX = 8192`, plus 2.5 GB for the weights - the shipped defaults
+(concurrency 2) are sized for an 8 GB host. Drop to `--concurrency 1` if the
+machine starts swapping.
+
+---
+
+## Connecting to a remote Ollama
+
+Ollama has no authentication, so binding it to `0.0.0.0` exposes the model and
+every prompt to anyone who can route to the port. An SSH tunnel is safer and
+needs no server-side change:
+
+```powershell
+ssh -N -L 11434:127.0.0.1:11434 user@host
+```
+
+The default host is `127.0.0.1`, so nothing else needs configuring. Override
+without editing source via `LOKALHUNT_HOST`, `LOKALHUNT_PORT`, or
+`OLLAMA_BASE_URL`.
+
+---
+
 ## Analysis Modes
 
 | Mode | Target Scope |

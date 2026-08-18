@@ -1,5 +1,5 @@
 """
-localHunt — Analyzer Module
+localHunt - Analyzer Module
 Handles communication with Ollama API to analyze file content.
 Supports RAG context injection from the knowledge base.
 """

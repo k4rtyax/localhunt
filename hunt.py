@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-lokalHunt — Command Line Interface
+lokalHunt - Command Line Interface
 Code security analysis assistant backed by local Ollama models.
 """
 
@@ -25,15 +25,28 @@ from modules.scanner import Scanner
 from modules.reporter import Reporter
 from modules.prompts import AVAILABLE_MODES
 
+# Redirected stdout defaults to cp1252 on Windows, which cannot encode the
+# spinner glyphs rich emits.
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
 console = Console()
 
 
 def update_host_in_config(new_ip: str):
-    """Update MAC_IP in config.py"""
+    """Update DEFAULT_HOST in config.py (LOKALHUNT_HOST still overrides it)."""
     import re
     config_path = Path(__file__).parent / "config.py"
     content = config_path.read_text(encoding="utf-8")
-    new_content = re.sub(r'MAC_IP\s*=\s*"[^"]*"', f'MAC_IP = "{new_ip}"', content)
+    new_content, n = re.subn(
+        r'DEFAULT_HOST\s*=\s*"[^"]*"', f'DEFAULT_HOST = "{new_ip}"', content
+    )
+    if not n:
+        raise ValueError("DEFAULT_HOST not found in config.py")
     config_path.write_text(new_content, encoding="utf-8")
 
 
@@ -50,7 +63,7 @@ def get_indexer():
 @click.group(invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
-    """lokalHunt — Local code security analysis utility."""
+    """lokalHunt - Local code security analysis utility."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -339,7 +352,7 @@ def cmd_scan(filepath, directory, mode, use_rag, top_k, ext, output, stream,
     extensions = list(ext) if ext else None
     scanner = Scanner(extensions=extensions)
 
-    # ── SINGLE FILE ──
+
     if filepath:
         file_info = scanner.scan_file(filepath)
         if not file_info or file_info.get("error"):
@@ -398,7 +411,7 @@ def cmd_scan(filepath, directory, mode, use_rag, top_k, ext, output, stream,
         summary = reporter.parse_summary(full_text)
         reporter.print_analysis_summary(file_info["name"], saved_path, summary)
 
-    # ── DIRECTORY ──
+
     elif directory:
         dir_path = Path(directory)
         if not dir_path.exists():
@@ -569,6 +582,210 @@ def cmd_chat(use_rag, host, model):
         console.print()
         full_text = "".join(full_response)
         history.append({"role": "assistant", "content": full_text})
+
+
+@cli.command("agents")
+def cmd_agents():
+    """List the specialist agents the swarm can spawn."""
+    from modules.agents import FINDERS, SKEPTIC, SYNTHESIZER
+
+    table = Table(
+        box=box.ROUNDED,
+        border_style="cyan",
+        header_style="bold cyan",
+        title="Swarm Agents",
+    )
+    table.add_column("Agent", style="bold white")
+    table.add_column("Role", style="dim", width=9)
+    table.add_column("Specialty", overflow="fold")
+    table.add_column("File types", style="dim", overflow="fold")
+
+    for agent in FINDERS:
+        exts = ", ".join(agent.extensions[:5]) if agent.extensions else "any"
+        if agent.extensions and len(agent.extensions) > 5:
+            exts += f" (+{len(agent.extensions) - 5})"
+        note = " [dim](needs a signal)[/dim]" if agent.needs_signal else ""
+        table.add_row(agent.name, "finder", agent.description + note, exts)
+
+    table.add_row(SKEPTIC.name, "verifier", SKEPTIC.description, "-")
+    table.add_row(SYNTHESIZER.name, "synth", SYNTHESIZER.description, "-")
+
+    console.print(table)
+    console.print(
+        "\n[dim]Agents are auto-selected per file from extension and a regex\n"
+        "pre-scan. Force a set with: [/dim]python hunt.py swarm -f x.js "
+        "-a secrets-hunter -a xss-hunter"
+    )
+
+
+@cli.command("swarm")
+@click.option("--file", "-f", "filepath", default=None, help="Target file path")
+@click.option("--dir", "-d", "directory", default=None, help="Target directory path")
+@click.option("--agent", "-a", "only_agents", multiple=True,
+              help="Force a specific agent (repeatable)")
+@click.option("--all-agents", is_flag=True, help="Run every agent on every file")
+@click.option("--no-verify", is_flag=True, help="Skip the adversarial verify phase")
+@click.option("--no-summary", is_flag=True, help="Skip the triage summary")
+@click.option("--votes", default=None, type=int, help="Skeptic votes per finding")
+@click.option("--concurrency", "-c", default=None, type=int,
+              help="Parallel agent calls")
+@click.option("--rag", "use_rag", is_flag=True, help="Enable knowledge base retrieval")
+@click.option("--top-k", default=3, show_default=True, help="Knowledge chunk limit")
+@click.option("--ext", multiple=True, help="Filter file extensions")
+@click.option("--no-recursive", is_flag=True, help="Disable recursive traversal")
+@click.option("--output", "-o", default=None, help="Markdown report path")
+@click.option("--json", "json_path", default=None,
+              help="Write machine-readable JSON to this path")
+@click.option("--stdout-json", is_flag=True,
+              help="Print the JSON result to stdout and nothing else")
+@click.option("--fail-on", default=None,
+              type=click.Choice(["critical", "high", "medium", "low", "info"]),
+              help="Exit non-zero when a finding at or above this severity is confirmed")
+@click.option("--host", default=None, help="Ollama host URL")
+@click.option("--model", default=DEFAULT_MODEL, show_default=True, help="Model name")
+def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summary,
+              votes, concurrency, use_rag, top_k, ext, no_recursive, output,
+              json_path, stdout_json, fail_on, host, model):
+    """Run a fleet of specialist agents against a target, then verify findings."""
+    import json as _json
+    from config import SWARM_CONCURRENCY, VERIFIER_VOTES
+    from modules.llm import OllamaClient
+    from modules.orchestrator import Swarm
+    from modules.schema import SEVERITY_RANK
+    from modules.textutil import count_tokens
+
+    if not filepath and not directory:
+        console.print("[red]Specify --file or --dir[/red]")
+        sys.exit(1)
+
+    quiet = stdout_json
+    url = host or OLLAMA_BASE_URL
+    reporter = Reporter()
+    if not quiet:
+        reporter.print_banner(model, url)
+
+    client = OllamaClient(model=model, base_url=url)
+    ok, msg = client.check()
+    if not ok:
+        reporter.print_connection_error(msg)
+        sys.exit(1)
+    if not quiet:
+        reporter.print_connection_ok(url, model)
+
+
+    scanner = Scanner(extensions=list(ext) if ext else None)
+    files: list[dict] = []
+
+    if filepath:
+        info = scanner.scan_file(filepath)
+        if not info or info.get("error"):
+            reporter.print_error(info.get("error", "Failed to read file"))
+            sys.exit(1)
+        files.append(info)
+    else:
+        dir_path = Path(directory)
+        if not dir_path.exists():
+            reporter.print_error(f"Directory not found: {directory}")
+            sys.exit(1)
+        for info in scanner.scan_directory(dir_path, not no_recursive):
+            if info.get("error"):
+                reporter.print_skipped(info.get("path", "?"), info["error"])
+                continue
+            files.append(info)
+
+    if not files:
+        reporter.print_warning("No matching files found.")
+        sys.exit(0)
+
+
+    rag_engine = None
+    if use_rag:
+        rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
+        if rag_engine.count() == 0:
+            console.print("[yellow]Knowledge base is empty; running without RAG.[/yellow]")
+            rag_engine = None
+
+    swarm = Swarm(
+        client,
+        rag=rag_engine,
+        rag_top_k=top_k,
+        concurrency=concurrency or SWARM_CONCURRENCY,
+        verifier_votes=0 if no_verify else (
+            VERIFIER_VOTES if votes is None else votes
+        ),
+    )
+
+    tasks = swarm.plan(files, only_agents=list(only_agents) or None, run_all=all_agents)
+    if not tasks:
+        reporter.print_warning("No agent matched these files.")
+        sys.exit(0)
+
+    if not quiet:
+        reporter.print_swarm_plan(
+            {
+                "files": len(files),
+                "agent_calls": len(tasks),
+                "windows": len({(t["file"]["path"], t["start_line"]) for t in tasks}),
+                "code_tokens": sum(count_tokens(f["content"]) for f in files),
+                "context_budget": client.num_ctx,
+            },
+            sorted({t["agent"].name for t in tasks}),
+        )
+
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+        disable=quiet,
+    )
+    hunt_task = progress.add_task("[cyan]Hunting", total=len(tasks))
+    verify_task = progress.add_task("[cyan]Verifying", total=None, visible=False)
+
+    def on_event(ev):
+        if ev.phase == "hunt" and ev.status in ("done", "error"):
+            label = f"[cyan]{ev.agent}[/cyan] {ev.file}"
+            progress.update(hunt_task, description=label, advance=1)
+        elif ev.phase == "sift" and ev.status == "done":
+            progress.update(hunt_task, description=f"[cyan]Sifted[/cyan] {ev.detail}")
+        elif ev.phase == "verify" and ev.status == "start":
+            progress.update(verify_task, visible=True,
+                            description=f"[cyan]skeptic[/cyan] {ev.detail}")
+        elif ev.phase == "synth" and ev.status == "start":
+            progress.update(verify_task, description="[cyan]triage-lead[/cyan] summarising")
+
+    swarm.on_event = on_event
+
+    try:
+        with progress:
+            result = swarm.run(
+                files,
+                only_agents=list(only_agents) or None,
+                run_all=all_agents,
+                verify=not no_verify,
+                synthesize=not no_summary,
+                tasks=tasks,
+            )
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Swarm interrupted by user.[/yellow]")
+        sys.exit(130)
+    finally:
+        client.close()
+
+
+    if stdout_json:
+        click.echo(_json.dumps(result.to_dict(), indent=2, ensure_ascii=False))
+    else:
+        report_path = reporter.save_swarm_report(result, output_path=output)
+        saved_json = reporter.save_swarm_json(result, output_path=json_path)
+        reporter.print_swarm_result(result, report_path, saved_json)
+
+    if fail_on:
+        threshold = SEVERITY_RANK[fail_on]
+        if any(f.rank <= threshold for f in result.findings):
+            sys.exit(2)
 
 
 if __name__ == "__main__":

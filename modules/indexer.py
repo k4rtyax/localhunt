@@ -1,5 +1,5 @@
 """
-lokalHunt — Indexer
+lokalHunt - Indexer
 Reads documents from the knowledge/ folder, chunks them, and indexes into RAG.
 
 Supported formats: .md, .txt
@@ -39,9 +39,6 @@ class Indexer:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
-    # ──────────────────────────────────────────
-    #  FILE DISCOVERY
-    # ──────────────────────────────────────────
     def list_documents(self) -> List[Path]:
         """List all indexable documents in the knowledge directory."""
         if not self.knowledge_dir.exists():
@@ -52,9 +49,6 @@ class Indexer:
             docs.extend(self.knowledge_dir.rglob(f"*{ext}"))
         return sorted(docs)
 
-    # ──────────────────────────────────────────
-    #  CHUNKING
-    # ──────────────────────────────────────────
     def chunk_text(self, text: str) -> List[str]:
         """
         Split text into overlapping chunks by token count.
@@ -107,9 +101,6 @@ class Indexer:
         approx_words = max(1, self.chunk_overlap * 3 // 4)
         return " ".join(words[-approx_words:])
 
-    # ──────────────────────────────────────────
-    #  INDEX
-    # ──────────────────────────────────────────
     def index_file(self, filepath: Path) -> List[str]:
         """Read and chunk a single file. Returns list of chunks."""
         try:

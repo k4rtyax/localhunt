@@ -128,7 +128,6 @@ class OllamaClient:
                 started = True
                 yield chunk
         except httpx.HTTPStatusError as e:
-            # Same fallback _post() does: older servers reject the think flag.
             if started or "think" not in payload:
                 raise
             if "think" not in e.response.text.lower():

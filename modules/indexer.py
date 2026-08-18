@@ -19,7 +19,7 @@ try:
     def _count_tokens(text: str) -> int:
         return len(_tokenizer.encode(text))
 except ImportError:
-    # Fallback: approximate token count (1 token ≈ 4 chars)
+    # Fallback: approximate token count, roughly 4 characters per token.
     def _count_tokens(text: str) -> int:
         return len(text) // 4
 
@@ -54,7 +54,6 @@ class Indexer:
         Split text into overlapping chunks by token count.
         Uses paragraph boundaries where possible for cleaner cuts.
         """
-        # Split by paragraphs first
         paragraphs = re.split(r"\n\s*\n", text.strip())
         paragraphs = [p.strip() for p in paragraphs if p.strip()]
 
@@ -65,14 +64,12 @@ class Indexer:
         for para in paragraphs:
             para_tokens = _count_tokens(para)
 
-            # If single paragraph exceeds chunk size, split by sentences
             if para_tokens > self.chunk_size:
                 sentences = re.split(r"(?<=[.!?])\s+", para)
                 for sentence in sentences:
                     sent_tokens = _count_tokens(sentence)
                     if current_tokens + sent_tokens > self.chunk_size and current_chunk:
                         chunks.append(current_chunk.strip())
-                        # Overlap: keep last part of previous chunk
                         overlap_text = self._get_overlap(current_chunk)
                         current_chunk = overlap_text + " " + sentence
                         current_tokens = _count_tokens(current_chunk)
@@ -111,11 +108,9 @@ class Indexer:
         if not text.strip():
             return []
 
-        # Add source header to each chunk for context
         doc_title = filepath.stem.replace("_", " ").replace("-", " ").title()
         chunks = self.chunk_text(text)
 
-        # Prepend source info to each chunk
         enriched = [
             f"[Source: {doc_title} | File: {filepath.name}]\n{chunk}"
             for chunk in chunks
@@ -143,7 +138,6 @@ class Indexer:
         for filepath in docs:
             src_key = str(filepath)
 
-            # Skip if already indexed (unless force re-index)
             if not force and src_key in existing_sources:
                 yield {
                     "file": filepath.name,
@@ -154,7 +148,6 @@ class Indexer:
                 continue
 
             try:
-                # If re-indexing, remove old chunks first
                 if force and src_key in existing_sources:
                     rag_engine.delete_source(src_key)
 
@@ -196,10 +189,10 @@ class Indexer:
             return "owasp"
         elif any(k in name for k in ["writeup", "report", "bounty", "poc"]):
             return "writeup"
-        elif any(k in name for k in ["pattern", "signature", "custom"]):
-            return "custom"
         elif any(k in name for k in ["malware", "obfusc", "skimmer"]):
             return "malware"
+        elif any(k in name for k in ["pattern", "signature", "custom"]):
+            return "custom"
         elif any(k in name for k in ["api", "doc", "target", "scope"]):
             return "target_doc"
         else:

@@ -43,7 +43,6 @@ class Analyzer:
         """
         system_prompt = get_prompt(mode)
 
-        # Inject RAG context into the system prompt if available
         if rag_context:
             system_prompt = system_prompt + "\n\n" + rag_context
 
@@ -59,7 +58,7 @@ class Analyzer:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                temperature=0.2,   # low, so output stays consistent and factual
+                temperature=0.2,
             )
 
     def chat_stream(

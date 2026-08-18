@@ -3,8 +3,8 @@ lokalHunt - RAG Engine
 Handles embeddings (via Ollama on Mac) and vector search (via ChromaDB local).
 
 Flow:
-  document text → Ollama nomic-embed-text (Mac) → vector → ChromaDB (Windows local)
-  query text    → Ollama nomic-embed-text (Mac) → vector → similarity search ChromaDB
+  document text -> Ollama nomic-embed-text (Mac) -> vector -> ChromaDB (Windows local)
+  query text    -> Ollama nomic-embed-text (Mac) -> vector -> similarity search ChromaDB
 """
 
 import hashlib
@@ -36,8 +36,10 @@ class RAGEngine:
         self.base_url = base_url.rstrip("/")
         self.embedding_model = embedding_model
         self.db_dir = db_dir
+        # nomic-embed-text is trained with task prefixes and ranks noticeably
+        # worse without them. Other models take the text as-is.
+        self._uses_task_prefix = "nomic-embed" in embedding_model.lower()
 
-        # Init ChromaDB (local persistent storage on Windows)
         Path(db_dir).mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(
             path=db_dir,
@@ -48,25 +50,29 @@ class RAGEngine:
             metadata={"hnsw:space": "cosine"},
         )
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str, task: str = "search_document") -> List[float]:
         """
-        Get embedding vector from Ollama (nomic-embed-text on Mac).
+        Get embedding vector from Ollama.
+        task: "search_document" when indexing, "search_query" when retrieving.
         Returns a list of floats (vector).
         """
+        prompt = f"{task}: {text}" if self._uses_task_prefix else text
         with httpx.Client(timeout=REQUEST_TIMEOUT) as client:
             resp = client.post(
                 f"{self.base_url}/api/embeddings",
                 json={
                     "model": self.embedding_model,
-                    "prompt": text,
+                    "prompt": prompt,
                 },
             )
             resp.raise_for_status()
             return resp.json()["embedding"]
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(
+        self, texts: List[str], task: str = "search_document"
+    ) -> List[List[float]]:
         """Embed multiple texts. Returns list of vectors."""
-        return [self.embed(t) for t in texts]
+        return [self.embed(t, task=task) for t in texts]
 
     def add_chunks(
         self,
@@ -81,13 +87,11 @@ class RAGEngine:
         if not chunks:
             return 0
 
-        # Generate stable IDs based on content hash
         ids = [
             hashlib.md5(f"{source}::{i}::{chunk[:50]}".encode()).hexdigest()
             for i, chunk in enumerate(chunks)
         ]
 
-        # Check which IDs already exist to avoid duplicates
         existing = self._collection.get(ids=ids, include=[])["ids"]
         existing_set = set(existing)
 
@@ -104,10 +108,8 @@ class RAGEngine:
         if not new_chunks:
             return 0
 
-        # Embed all new chunks
         embeddings = self.embed_batch(new_chunks)
 
-        # Store in ChromaDB
         self._collection.add(
             ids=new_ids,
             embeddings=embeddings,
@@ -130,17 +132,20 @@ class RAGEngine:
         self,
         query: str,
         top_k: int = RAG_TOP_K,
+        categories: tuple[str, ...] | None = None,
     ) -> List[Tuple[str, str, float]]:
         """
         Search for relevant chunks.
+        categories: restrict to these Indexer categories (owasp, malware, ...).
         Returns list of (chunk_text, source, relevance_score).
         """
-        query_vector = self.embed(query)
+        query_vector = self.embed(query, task="search_query")
 
         results = self._collection.query(
             query_embeddings=[query_vector],
             n_results=min(top_k, max(self.count(), 1)),
             include=["documents", "metadatas", "distances"],
+            where={"category": {"$in": list(categories)}} if categories else None,
         )
 
         output = []
@@ -160,14 +165,14 @@ class RAGEngine:
         query: str,
         top_k: int = RAG_TOP_K,
         min_score: float = 0.3,
+        categories: tuple[str, ...] | None = None,
     ) -> str | None:
         """
         Search and format results as a context string for AI prompt injection.
         Returns None if no relevant results found.
         """
-        results = self.search(query, top_k=top_k)
+        results = self.search(query, top_k=top_k, categories=categories)
 
-        # Filter by minimum relevance score
         relevant = [(doc, src, score) for doc, src, score in results if score >= min_score]
 
         if not relevant:
@@ -179,7 +184,6 @@ class RAGEngine:
         ]
 
         for i, (doc, src, score) in enumerate(relevant, 1):
-            # Show source filename only (not full path)
             src_name = Path(src).name
             lines.append(f"### [{i}] Source: `{src_name}` (relevance: {score:.0%})")
             lines.append(doc)

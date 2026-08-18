@@ -37,7 +37,7 @@ class SwarmEvent:
     agent: str = ""
     file: str = ""
     detail: str = ""
-    count: int = 0      # items this phase produced, where it knows
+    count: int = 0
 
 
 @dataclass
@@ -99,7 +99,7 @@ class Swarm:
         self.context_budget = max(0, client.num_ctx - RESERVE_OUTPUT_TOKENS)
         self.chunk_tokens = min(chunk_tokens, max(512, self.context_budget))
         self.on_event = on_event
-        self._rag_cache: dict[str, str] = {}
+        self._rag_cache: dict[tuple, str] = {}
         self._rag_lock = threading.Lock()
         self._errors_lock = threading.Lock()
         self._errors: list[str] = []
@@ -170,20 +170,35 @@ class Swarm:
             "context_budget": self.context_budget,
         }
 
-    def _rag_context(self, agent: AgentSpec, filename: str) -> str:
-        """Retrieve knowledge-base context once per agent, then reuse it."""
+    def _rag_context(self, agent: AgentSpec, signals: list[str]) -> str:
+        """
+        Retrieve knowledge-base context for this agent and for what the regex
+        pre-scan actually found in the file, so the lookup depends on the code
+        under review instead of being a fixed per-agent string. Identical
+        (agent, signals) pairs reuse the cached result.
+        """
         if not self.rag or not agent.rag_query:
             return ""
+        leads = tuple(sorted(set(signals or ())))[:5]
+        key = (agent.name, leads)
         with self._rag_lock:
-            if agent.name in self._rag_cache:
-                return self._rag_cache[agent.name]
+            if key in self._rag_cache:
+                return self._rag_cache[key]
+
+        query = agent.rag_query
+        if leads:
+            query += " " + " ".join(leads)
         try:
-            ctx = self.rag.format_context(agent.rag_query, top_k=self.rag_top_k) or ""
+            ctx = self.rag.format_context(
+                query,
+                top_k=self.rag_top_k,
+                categories=agent.rag_categories or None,
+            ) or ""
         except Exception as e:
             self._record_error(f"RAG lookup failed for {agent.name}: {e}")
             ctx = ""
         with self._rag_lock:
-            self._rag_cache[agent.name] = ctx
+            self._rag_cache[key] = ctx
         return ctx
 
     def _hunt_one(self, task: dict) -> list[Finding]:
@@ -210,7 +225,7 @@ class Swarm:
             )
 
         system = agent.system_prompt
-        rag_ctx = self._rag_context(agent, info["name"])
+        rag_ctx = self._rag_context(agent, task["signals"])
         if rag_ctx:
             system = f"{system}\n\n{rag_ctx}"
 

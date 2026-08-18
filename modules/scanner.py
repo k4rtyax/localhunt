@@ -51,7 +51,6 @@ class Scanner:
 
         truncated = False
         if len(content.encode("utf-8")) > self.max_size:
-            # Truncate to max_size bytes
             content = content.encode("utf-8")[: self.max_size].decode(
                 "utf-8", errors="ignore"
             )

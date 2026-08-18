@@ -42,6 +42,7 @@ class AgentSpec:
     needs_signal: bool = False                  # only run when a signal matches
     temperature: float = 0.1
     rag_query: str = ""
+    rag_categories: tuple[str, ...] = ()    # Indexer categories worth reading
     _compiled: list = field(default_factory=list, repr=False, compare=False)
 
     @property
@@ -103,6 +104,7 @@ and must not be reported.
             r"xox[baprs]-[A-Za-z0-9-]{10,}",
         ),
         rag_query="hardcoded secrets api keys credentials detection patterns",
+        rag_categories=('custom', 'owasp'),
     ),
     AgentSpec(
         name="xss-hunter",
@@ -137,6 +139,7 @@ constant is not a finding.
             r"__proto__|constructor\s*\[|prototype\s*\[",
         ),
         rag_query="dom xss sources sinks prototype pollution payloads",
+        rag_categories=('owasp', 'writeup', 'custom'),
     ),
     AgentSpec(
         name="sqli-hunter",
@@ -167,6 +170,7 @@ integer already cast with a strict parser is also not a finding.
             r"cursor\.execute\s*\(.*%",
         ),
         rag_query="sql injection nosql injection unsafe query concatenation",
+        rag_categories=('owasp', 'writeup', 'custom'),
     ),
     AgentSpec(
         name="rce-hunter",
@@ -196,9 +200,10 @@ Report the sink together with the input path that reaches it.
             r"pickle\.loads|yaml\.load\s*\((?![^)]*Safe)|unserialize\s*\(",
             r"path\.join\s*\([^)]*req\.|\.\./",
             r"requests\.get\s*\(|axios\.get\s*\(|fetch\s*\(|urlopen\s*\(",
-            r"__import__|importlib\.import_module|require\s*\(\s*[^\"'）)]",
+            r"__import__|importlib\.import_module|require\s*\(\s*[^\"')]",
         ),
         rag_query="command injection ssrf path traversal insecure deserialization",
+        rag_categories=('owasp', 'writeup', 'custom'),
     ),
     AgentSpec(
         name="authz-auditor",
@@ -229,6 +234,7 @@ inconsistency is usually the finding.
             r"findById|findOne|get_object_or_404|\.objects\.get",
         ),
         rag_query="broken access control idor jwt verification mass assignment",
+        rag_categories=('owasp', 'writeup'),
     ),
     AgentSpec(
         name="crypto-auditor",
@@ -255,6 +261,7 @@ Your only job is cryptography and transport security:
             r"http://(?!localhost|127\.0\.0\.1)",
         ),
         rag_query="weak cryptography insecure randomness tls verification disabled",
+        rag_categories=('owasp', 'custom'),
     ),
     AgentSpec(
         name="config-auditor",
@@ -283,6 +290,7 @@ Your only job is configuration and deployment security:
             r"0\.0\.0\.0|\"Action\"\s*:\s*\"\*\"|\"Principal\"\s*:\s*\"\*\"",
         ),
         rag_query="insecure configuration cors misconfiguration security headers",
+        rag_categories=('owasp', 'custom', 'target_doc'),
     ),
     AgentSpec(
         name="endpoint-mapper",
@@ -309,6 +317,7 @@ Set "title" to the method and path, "evidence" to the route definition line.
             r"s3\.amazonaws\.com|blob\.core\.windows\.net|storage\.googleapis\.com",
         ),
         rag_query="api endpoint enumeration attack surface mapping",
+        rag_categories=('target_doc', 'custom'),
     ),
     AgentSpec(
         name="deobfuscator",
@@ -340,6 +349,7 @@ obfuscation on its own is medium.
         needs_signal=True,
         temperature=0.2,
         rag_query="javascript obfuscation malware skimmer exfiltration patterns",
+        rag_categories=('malware', 'custom'),
     ),
 )
 

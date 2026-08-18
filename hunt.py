@@ -50,8 +50,18 @@ def update_host_in_config(new_ip: str):
     config_path.write_text(new_content, encoding="utf-8")
 
 
+class RAGUnavailable(RuntimeError):
+    """chromadb is an optional extra: RAG commands need it, the rest do not."""
+
+
 def get_rag_engine(base_url: str, model: str):
-    from modules.rag import RAGEngine
+    try:
+        from modules.rag import RAGEngine
+    except ImportError as e:
+        raise RAGUnavailable(
+            "Knowledge-base support needs chromadb, which is not installed "
+            "(" + str(e) + ")." + chr(10) + "Install it with: pip install chromadb"
+        ) from None
     return RAGEngine(base_url=base_url, embedding_model=model)
 
 
@@ -94,7 +104,12 @@ def cmd_check(host, model):
         sys.exit(1)
 
     console.print(f"\n[dim]Checking embedding model ({EMBEDDING_MODEL})...[/dim]")
-    rag = get_rag_engine(url, EMBEDDING_MODEL)
+    try:
+        rag = get_rag_engine(url, EMBEDDING_MODEL)
+    except RAGUnavailable as e:
+        console.print("[yellow]Knowledge base unavailable:[/yellow] " + str(e))
+        console.print("[dim]Scanning still works; only RAG is affected.[/dim]")
+        return
     ok_emb, msg_emb = rag.check_embedding_model()
 
     if ok_emb:
@@ -149,7 +164,11 @@ def cmd_index(kb_dir, force, host, embed_model):
         console.print(f"Created directory {kb_path.resolve()}. Add .md or .txt files and rerun indexing.")
         return
 
-    rag = get_rag_engine(url, embed_model)
+    try:
+        rag = get_rag_engine(url, embed_model)
+    except RAGUnavailable as e:
+        reporter.print_error(str(e))
+        sys.exit(1)
     ok, msg = rag.check_embedding_model()
     if not ok:
         reporter.print_connection_error(f"Embedding model unavailable:\n{msg}")
@@ -214,8 +233,12 @@ def cmd_index(kb_dir, force, host, embed_model):
 def cmd_knowledge(do_list, add_file, query, clear, host, top_k):
     """Manage and query knowledge base documents."""
     url = host or OLLAMA_BASE_URL
-    rag = get_rag_engine(url, EMBEDDING_MODEL)
     reporter = Reporter()
+    try:
+        rag = get_rag_engine(url, EMBEDDING_MODEL)
+    except RAGUnavailable as e:
+        reporter.print_error(str(e))
+        sys.exit(1)
 
     if do_list:
         sources = rag.list_sources()
@@ -342,12 +365,17 @@ def cmd_scan(filepath, directory, mode, use_rag, top_k, ext, output, stream,
 
     rag_engine = None
     if use_rag:
-        rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
-        kb_count = rag_engine.count()
-        if kb_count == 0:
-            console.print("[yellow]Warning: RAG requested but knowledge base is empty.[/yellow]")
+        try:
+            rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
+        except RAGUnavailable as e:
+            console.print("[yellow]" + str(e) + "[/yellow]")
+            console.print("[dim]Running without RAG.[/dim]")
         else:
-            console.print(f"RAG active ({kb_count} chunks, top-k: {top_k})")
+            kb_count = rag_engine.count()
+            if kb_count == 0:
+                console.print("[yellow]Warning: RAG requested but knowledge base is empty.[/yellow]")
+            else:
+                console.print(f"RAG active ({kb_count} chunks, top-k: {top_k})")
 
     extensions = list(ext) if ext else None
     scanner = Scanner(extensions=extensions)
@@ -518,12 +546,17 @@ def cmd_chat(use_rag, host, model):
 
     rag_engine = None
     if use_rag:
-        rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
-        kb_count = rag_engine.count()
-        if kb_count > 0:
-            console.print(f"RAG active ({kb_count} chunks)")
+        try:
+            rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
+        except RAGUnavailable as e:
+            console.print("[yellow]" + str(e) + "[/yellow]")
+            console.print("[dim]Running without RAG.[/dim]")
         else:
-            console.print("[yellow]Knowledge base is empty.[/yellow]")
+            kb_count = rag_engine.count()
+            if kb_count > 0:
+                console.print(f"RAG active ({kb_count} chunks)")
+            else:
+                console.print("[yellow]Knowledge base is empty.[/yellow]")
 
     console.print(
         Panel(
@@ -699,10 +732,15 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
 
     rag_engine = None
     if use_rag:
-        rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
-        if rag_engine.count() == 0:
-            console.print("[yellow]Knowledge base is empty; running without RAG.[/yellow]")
-            rag_engine = None
+        try:
+            rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
+        except RAGUnavailable as e:
+            console.print("[yellow]" + str(e) + "[/yellow]")
+            console.print("[dim]Running without RAG.[/dim]")
+        else:
+            if rag_engine.count() == 0:
+                console.print("[yellow]Knowledge base is empty; running without RAG.[/yellow]")
+                rag_engine = None
 
     swarm = Swarm(
         client,

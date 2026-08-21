@@ -33,6 +33,7 @@ see "Connecting to a remote Ollama" below.
 ## Setup
 
 ### 1. Ollama Server
+
 ```bash
 brew install ollama
 ollama pull qwen3:4b
@@ -41,6 +42,7 @@ ollama serve                   # loopback only, no flags
 ```
 
 ### 2. Client
+
 ```powershell
 pip install -r requirements.txt
 python hunt.py check
@@ -66,6 +68,7 @@ warning and scans without retrieval.
 ## Usage
 
 ### Single File Analysis
+
 ```powershell
 python hunt.py scan --file target.js
 python hunt.py scan --file bundle.js --mode secrets
@@ -76,12 +79,14 @@ python hunt.py scan --file target.js --stream
 ```
 
 ### Directory Analysis
+
 ```powershell
 python hunt.py scan --dir C:\path\to\webapp\
 python hunt.py scan --dir .\webapp\ --ext .js --ext .php
 ```
 
 ### Retrieval-Augmented Generation (RAG)
+
 ```powershell
 # Index reference documents from knowledge/
 python hunt.py index
@@ -114,6 +119,7 @@ target-specific notes and real writeups are worth more here than restatements
 of OWASP, which the model already knows.
 
 ### Interactive Session
+
 ```powershell
 python hunt.py chat
 python hunt.py chat --rag
@@ -144,19 +150,19 @@ python hunt.py swarm -f app.js --stdout-json           # for scripts and CI
 python hunt.py swarm -d .\src --fail-on high           # exit 2 on high+
 ```
 
-| Agent | Covers |
-|---|---|
-| `secrets-hunter` | Hardcoded keys, tokens, connection strings, private keys |
-| `xss-hunter` | DOM/reflected XSS sources and sinks, prototype pollution |
-| `sqli-hunter` | SQL/NoSQL injection, unsafe query construction |
-| `rce-hunter` | Command injection, SSRF, path traversal, deserialization |
-| `authz-auditor` | Broken access control, IDOR, JWT handling, mass assignment |
-| `crypto-auditor` | Weak hashes and ciphers, predictable randomness, TLS bypass |
-| `config-auditor` | Permissive CORS, debug mode, cookie flags, IAM wildcards |
-| `endpoint-mapper` | Attack-surface recon: routes, hosts, buckets, debug paths |
-| `deobfuscator` | Packed scripts, skimmers, exfiltration channels |
-| `skeptic` | Adversarial verifier - refutes findings the finders produced |
-| `triage-lead` | Merges what survived into an executive summary |
+| Agent             | Covers                                                       |
+| ----------------- | ------------------------------------------------------------ |
+| `secrets-hunter`  | Hardcoded keys, tokens, connection strings, private keys     |
+| `xss-hunter`      | DOM/reflected XSS sources and sinks, prototype pollution     |
+| `sqli-hunter`     | SQL/NoSQL injection, unsafe query construction               |
+| `rce-hunter`      | Command injection, SSRF, path traversal, deserialization     |
+| `authz-auditor`   | Broken access control, IDOR, JWT handling, mass assignment   |
+| `crypto-auditor`  | Weak hashes and ciphers, predictable randomness, TLS bypass  |
+| `config-auditor`  | Permissive CORS, debug mode, cookie flags, IAM wildcards     |
+| `endpoint-mapper` | Attack-surface recon: routes, hosts, buckets, debug paths    |
+| `deobfuscator`    | Packed scripts, skimmers, exfiltration channels              |
+| `skeptic`         | Adversarial verifier - refutes findings the finders produced |
+| `triage-lead`     | Merges what survived into an executive summary               |
 
 Every finding carries `verdict`, `confidence`, and `unverified_evidence` - the
 last one flags a citation that could not be located in the source file, which
@@ -164,14 +170,14 @@ is the cheapest way to catch a model that invented its evidence.
 
 `verdict` is `real`, `refuted`, or `unverified`:
 
-| Verdict | Meaning |
-|---|---|
-| `real` | The skeptic tried to refute it and could not |
-| `refuted` | The skeptic showed the flaw is not present, and the finding is dropped from the findings list into `refuted` |
-| `unverified` | The skeptic's refutation was thrown out, or the verifier itself crashed. The finding is kept |
+| Verdict      | Meaning                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------ |
+| `real`       | The skeptic tried to refute it and could not                                                                 |
+| `refuted`    | The skeptic showed the flaw is not present, and the finding is dropped from the findings list into `refuted` |
+| `unverified` | The skeptic's refutation was thrown out, or the verifier itself crashed. The finding is kept                 |
 
-A refutation is thrown out when it rests on what the file *is* rather than on
-what the code *does*: that it is a demo, a test, a fixture, or not production.
+A refutation is thrown out when it rests on what the file _is_ rather than on
+what the code _does_: that it is a demo, a test, a fixture, or not production.
 The skeptic prompt directs that judgement to `adjusted_severity` instead, but a
 4B model ignores the rule often enough that it is enforced in code rather than
 trusted to the prompt. The proposed severity is still applied, so the finding
@@ -227,14 +233,14 @@ without editing source via `LOKALHUNT_HOST`, `LOKALHUNT_PORT`, or
 
 ## Analysis Modes
 
-| Mode | Target Scope |
-|---|---|
-| `full` | Comprehensive review |
-| `secrets` | Hardcoded keys, tokens, credentials |
-| `xss` | DOM sinks, sources, injection vectors |
-| `endpoints` | Route definitions, internal APIs |
-| `obfuscated` | Deobfuscation and script behavior |
-| `sqli` | Query concatenation and injection patterns |
+| Mode         | Target Scope                               |
+| ------------ | ------------------------------------------ |
+| `full`       | Comprehensive review                       |
+| `secrets`    | Hardcoded keys, tokens, credentials        |
+| `xss`        | DOM sinks, sources, injection vectors      |
+| `endpoints`  | Route definitions, internal APIs           |
+| `obfuscated` | Deobfuscation and script behavior          |
+| `sqli`       | Query concatenation and injection patterns |
 
 ---
 
@@ -262,3 +268,5 @@ localhunt/
 ├── reports/             gitignored: findings routinely contain live secrets
 └── db/                  gitignored: ChromaDB vector store
 ```
+
+Collab with claude Opus 5

@@ -5,6 +5,22 @@ System prompts for target code analysis modes.
 
 BASE_SYSTEM = """Analyze the provided source code for security flaws, configuration issues, and sensitive data.
 Provide concise, technical findings with relevant line numbers or code references, risk assessment, and specific evidence.
+
+Start every finding with a header line in exactly this form:
+
+### [SEVERITY] Short title
+
+SEVERITY is one of CRITICAL, HIGH, MEDIUM, LOW, INFO. Write one header per
+distinct finding, and never put a bracketed severity label on any other line.
+Under the header give the line number, the evidence, the impact and the fix:
+
+### [CRITICAL] Hardcoded cloud access key
+- Line: 12
+- Evidence: `AWS_SECRET_KEY = "wJalrXUtnFEMI..."`
+- Impact: full access to the account the key belongs to
+- Fix: read the key from the environment and rotate the leaked one
+
+If the file has no security issues, write "No findings." and emit no headers.
 """
 
 PROMPTS = {

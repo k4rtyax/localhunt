@@ -15,6 +15,15 @@ from config import REPORTS_DIR, THEME
 
 console = Console()
 
+# Severity rows, in the order both summary panels render them.
+SEVERITY_ROWS = [
+    ("Critical", THEME["critical"]),
+    ("High", THEME["high"]),
+    ("Medium", THEME["medium"]),
+    ("Low", THEME["low"]),
+    ("Info", THEME["info"]),
+]
+
 
 class Reporter:
     """Handles terminal display and report persistence."""
@@ -63,49 +72,60 @@ class Reporter:
         console.print()
         console.print(Rule("[bold]Analysis[/bold]", style="cyan"))
 
+    # Matches the finding header BASE_SYSTEM asks for in modules/prompts.py.
+    # Anchoring the tally to this line is what stops prose that merely mentions
+    # a severity from being counted as a finding.
+    FINDING_HEADER = re.compile(
+        r"^\s{0,3}#{1,6}\s*\[\s*(critical|high|medium|low|info)\s*\]\s*(.+?)\s*$",
+        re.IGNORECASE,
+    )
+
+    # The model is asked to say this instead of emitting headers on a clean
+    # file, which separates "nothing found" from "format not followed".
+    NO_FINDINGS = re.compile(
+        r"\bno\s+(?:security\s+)?(?:findings|issues|vulnerabilities)\b",
+        re.IGNORECASE,
+    )
+
     def parse_summary(self, text: str) -> dict:
-        """Parse analysis text to extract finding counts and summary points."""
+        """
+        Extract finding counts and titles from an analysis.
+
+        Returns counts as None when the model ignored the header format, so the
+        caller can omit the tally rather than print a number taken from prose.
+        """
         counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0, "Info": 0}
-
-        for line in text.splitlines():
-            upper = line.upper()
-            for sev in ["Critical", "High", "Medium", "Low", "Info"]:
-                if re.search(rf"\b{sev.upper()}\b", upper) and len(line) < 200:
-                    counts[sev] += 1
-
         findings = []
-        for line in text.splitlines():
-            stripped = line.strip()
-            if (
-                stripped
-                and 20 < len(stripped) < 150
-                and stripped[0] in ("-", "*", ">")
-                and not stripped.lower().startswith(("- [", "- no ", "- none"))
-            ):
-                clean = re.sub(r"^\s*[-*>]+\s*", "", stripped)
-                clean = re.sub(r"\*\*(.*?)\*\*", r"\1", clean)
-                if clean and clean not in findings:
-                    findings.append(clean)
-            if len(findings) >= 5:
-                break
 
-        return {**counts, "findings": findings}
+        for line in text.splitlines():
+            match = self.FINDING_HEADER.match(line)
+            if not match:
+                continue
+            counts[match.group(1).capitalize()] += 1
+            title = re.sub(r"\*\*(.*?)\*\*", r"\1", match.group(2)).strip()
+            if title and title not in findings:
+                findings.append(title)
+
+        if not any(counts.values()):
+            if self.NO_FINDINGS.search(text):
+                return {"counts": counts, "findings": []}
+            return {"counts": None, "findings": []}
+
+        return {"counts": counts, "findings": findings}
 
     def print_analysis_summary(self, filename: str, report_path: str, summary: dict):
         """Print summary block for a single file analysis."""
-        sev_parts = []
-        severity_map = [
-            ("Critical", THEME["critical"]),
-            ("High", THEME["high"]),
-            ("Medium", THEME["medium"]),
-            ("Low", THEME["low"]),
-        ]
-        for sev, color in severity_map:
-            count = summary.get(sev, 0)
-            if count > 0:
-                sev_parts.append(f"[{color}]{sev}: {count}[/{color}]")
+        counts = summary.get("counts")
 
-        sev_line = "  ".join(sev_parts) if sev_parts else "[dim]No critical findings identified[/dim]"
+        if counts is None:
+            sev_line = "[dim]Findings could not be counted, see the report[/dim]"
+        else:
+            sev_parts = [
+                f"[{color}]{sev}: {counts[sev]}[/{color}]"
+                for sev, color in SEVERITY_ROWS
+                if counts[sev] > 0
+            ]
+            sev_line = "  ".join(sev_parts) if sev_parts else "[dim]No findings identified[/dim]"
 
         findings_lines = ""
         for f in summary.get("findings", [])[:4]:
@@ -121,31 +141,37 @@ class Reporter:
 
         body += f"\n\n[dim]Report:[/dim] [cyan underline]{report_path}[/cyan underline]"
 
-        border = "red" if summary.get("Critical", 0) > 0 else \
-                 "dark_orange" if summary.get("High", 0) > 0 else \
-                 "yellow" if summary.get("Medium", 0) > 0 else "cyan"
+        if counts is None:
+            border = "cyan"
+        elif counts["Critical"]:
+            border = "red"
+        elif counts["High"]:
+            border = "dark_orange"
+        elif counts["Medium"]:
+            border = "yellow"
+        else:
+            border = "cyan"
 
         console.print()
         console.print(Panel(body, border_style=border, padding=(0, 2)))
 
     def print_dir_summary_panel(self, total_files: int, report_path: str, all_summaries: list[dict]):
         """Print directory aggregate results."""
-        totals = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+        totals = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0, "Info": 0}
+        uncounted = 0
         for s in all_summaries:
+            counts = s.get("counts")
+            if counts is None:
+                uncounted += 1
+                continue
             for sev in totals:
-                totals[sev] += s.get(sev, 0)
+                totals[sev] += counts.get(sev, 0)
 
         table = Table(box=box.ROUNDED, border_style="cyan", header_style="bold cyan")
         table.add_column("Severity", style="bold")
         table.add_column("Count", justify="right")
 
-        severity_map = [
-            ("Critical", THEME["critical"]),
-            ("High", THEME["high"]),
-            ("Medium", THEME["medium"]),
-            ("Low", THEME["low"]),
-        ]
-        for sev, color in severity_map:
+        for sev, color in SEVERITY_ROWS:
             cnt = totals[sev]
             table.add_row(f"[{color}]{sev}[/{color}]", f"[{color}]{cnt}[/{color}]")
 
@@ -153,6 +179,12 @@ class Reporter:
         console.print(Rule("[bold]Scan Results[/bold]", style="cyan"))
         console.print(f"Files analyzed: [bold]{total_files}[/bold]")
         console.print(table)
+        if uncounted:
+            console.print(
+                f"[{THEME['medium']}]{uncounted} of {total_files} file(s) did not "
+                f"follow the finding format and are not in this tally."
+                f"[/{THEME['medium']}]"
+            )
         console.print(f"\nReport: [cyan underline]{report_path}[/cyan underline]")
 
     def print_dir_summary(self, directory: str, total: int, mode: str):

@@ -1,7 +1,7 @@
 # Vector store
 db/
 
-# Analysis output — may contain secrets recovered from targets
+# Analysis output - may contain secrets recovered from targets
 reports/
 
 # Local overrides

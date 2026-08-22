@@ -34,10 +34,13 @@ from modules.textutil import (
 # instead of trusted to the prompt. These match claims about the FILE, not
 # about a value: "documentation sample key" is a legitimate refutation, while
 # "this file is a sample" is not.
+# The adjective slot matters: a skeptic wrote "the .env file is a common
+# practice", which the earlier pattern missed by exactly one word.
 _OUT_OF_BOUNDS = re.compile(
     r"(?:"
     r"(?:file|code|script|snippet|project|app|application|repo\w*)\s+(?:is|are|looks?|seems?|appears?)"
-    r"\s+(?:like\s+)?(?:a|an)?\s*(?:demo|sample|example|test|mock|dummy|practice|exercise)"
+    r"\s+(?:like\s+)?(?:a|an)?\s*(?:\w+\s+){0,2}"
+    r"(?:demo|sample|example|test|mock|dummy|practice|convention|exercise)"
     r"|(?:demo|sample|example|test|mock|dummy|practice|training)\s+"
     r"(?:file|code|script|snippet|project|app|application|repo\w*|environment)"
     r"|not\s+(?:a\s+)?real\s+(?:app|application|project|codebase|code|system)"
@@ -45,6 +48,27 @@ _OUT_OF_BOUNDS = re.compile(
     r"|non-production"
     r"|(?:intentionally|deliberately|purposely)\s+vulnerable"
     r"|for\s+(?:demonstration|educational|learning|teaching)\s+purposes"
+    # Where the file sits and whether it ships are not claims about the code,
+    # and the skeptic cannot see any of it from the file content anyway.
+    r"|(?:not|never)\s+(?:be\s+)?(?:committed|checked\s+in|pushed|tracked)"
+    r"(?:\s+\w+){0,3}?\s+(?:version\s+control|source\s+control|git\b|vcs|the\s+repo\w*)"
+    r"|gitignored|in\s+\.gitignore|excluded\s+from\s+(?:the\s+)?repo\w*"
+    r")",
+    re.IGNORECASE,
+)
+
+# A 4B skeptic regularly argues its way to "the finding is real" and then
+# returns real=false anyway. The prose is not authoritative, but a refutation
+# that contradicts itself is not one either, so it does not get to delete a
+# finding.
+_ASSERTS_REAL = re.compile(
+    r"(?:"
+    r"(?:finding|issue|vulnerability|vuln|flaw|report)\s+(?:is|does\s+(?:appear|seem))"
+    r"\s+(?:in\s+fact\s+)?(?:to\s+be\s+)?(?:real|valid|genuine|correct|legitimate|accurate)"
+    r"|is\s+(?:a|an)\s+(?:\w+\s+){0,2}(?:real|valid|genuine|legitimate)\s+"
+    r"(?:finding|issue|vulnerability|vuln|flaw|concern|risk)"
+    r"|(?:cannot|can\s?not|can't|could\s+not|couldn't|unable\s+to)\s+(?:be\s+)?refute"
+    r"|(?:i\s+)?confirm(?:s|ed)?\s+(?:the\s+|this\s+)?(?:finding|issue|vulnerability)"
     r")",
     re.IGNORECASE,
 )
@@ -53,6 +77,11 @@ _OUT_OF_BOUNDS = re.compile(
 def refuses_on_context(reason: str) -> bool:
     """True when a refutation rests on what the file IS rather than what it does."""
     return bool(_OUT_OF_BOUNDS.search(reason or ""))
+
+
+def asserts_real(reason: str) -> bool:
+    """True when a refutation's own words conclude the finding is real."""
+    return bool(_ASSERTS_REAL.search(reason or ""))
 
 
 @dataclass
@@ -122,6 +151,9 @@ class Swarm:
         self.verifier_votes = max(0, verifier_votes)
         self.min_confidence = min_confidence
         self.verify_overrides = 0
+        # Agent calls that raised. A run where every call failed produced no
+        # analysis at all, and must not be reported as a clean result.
+        self.hunt_failures = 0
         # RESERVE_OUTPUT_TOKENS is the model's room to answer inside num_ctx;
         # code windows have to fit in what is left.
         self.context_budget = max(0, client.num_ctx - RESERVE_OUTPUT_TOKENS)
@@ -296,6 +328,7 @@ class Swarm:
     def hunt(self, tasks: list[dict]) -> list[Finding]:
         """Run every planned task concurrently."""
         findings: list[Finding] = []
+        self.hunt_failures = 0
         if not tasks:
             return findings
 
@@ -307,6 +340,7 @@ class Swarm:
                     try:
                         findings.extend(fut.result())
                     except Exception as e:
+                        self.hunt_failures += 1
                         self._record_error(
                             f"{task['agent'].name} on {task['file']['name']}: {e}"
                         )
@@ -428,18 +462,32 @@ class Swarm:
         )
 
         if finding.verdict == "refuted":
-            rejected = [
+            # A refutation may only rest on what the code does. Two kinds are
+            # thrown out: one that argues from what the file is, and one whose
+            # own reasoning concludes the finding is real.
+            out_of_bounds = [
                 v for v in votes
                 if not v["real"] and refuses_on_context(v["reason"])
             ]
+            contradicts_itself = [
+                v for v in votes
+                if not v["real"] and asserts_real(v["reason"])
+            ]
+            rejected = out_of_bounds or contradicts_itself
             if rejected:
                 for v in rejected:
                     v["policy_override"] = True
                 finding.verdict = "unverified"
-                finding.verdict_reason = (
+                grounds = (
                     "Refuted on out-of-bounds grounds (what the file is, not "
-                    "what the code does), so the refutation was discarded and "
-                    "this finding is kept for a human. Verifier said: "
+                    "what the code does)"
+                    if out_of_bounds else
+                    "The refutation's own reasoning concludes the finding is real"
+                )
+                finding.verdict_reason = (
+                    grounds
+                    + ", so the refutation was discarded and this finding is "
+                    "kept for a human. Verifier said: "
                     + truncate(rejected[0]["reason"], 240)
                 )
 
@@ -560,6 +608,7 @@ class Swarm:
 
         raw = self.hunt(tasks)
         result.stats["raw_findings"] = len(raw)
+        result.stats["agent_failures"] = self.hunt_failures
 
         sifted = self.sift(raw, files)
         result.stats["unique_findings"] = len(sifted)

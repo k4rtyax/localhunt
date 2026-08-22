@@ -6,6 +6,9 @@ System prompts for target code analysis modes.
 BASE_SYSTEM = """Analyze the provided source code for security flaws, configuration issues, and sensitive data.
 Provide concise, technical findings with relevant line numbers or code references, risk assessment, and specific evidence.
 
+The source is given with an "NN |" line-number prefix. Copy every line number
+from that prefix, and quote evidence without it.
+
 Start every finding with a header line in exactly this form:
 
 ### [SEVERITY] Short title
@@ -15,7 +18,7 @@ distinct finding, and never put a bracketed severity label on any other line.
 Under the header give the line number, the evidence, the impact and the fix:
 
 ### [CRITICAL] Hardcoded cloud access key
-- Line: 12
+- Line: <the number in the "NN |" prefix, never one from this example>
 - Evidence: `AWS_SECRET_KEY = "wJalrXUtnFEMI..."`
 - Impact: full access to the account the key belongs to
 - Fix: read the key from the environment and rotate the leaked one

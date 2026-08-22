@@ -9,6 +9,7 @@ from typing import Generator
 from config import OLLAMA_BASE_URL, DEFAULT_MODEL
 from modules.llm import OllamaClient
 from modules.prompts import get_prompt
+from modules.textutil import number_lines
 
 
 class Analyzer:
@@ -49,7 +50,7 @@ class Analyzer:
         user_message = (
             f"Analyze this file for security vulnerabilities.\n"
             f"Filename: {filename}\n\n"
-            f"```\n{content}\n```"
+            f"```\n{number_lines(content)}\n```"
         )
 
         with self._client() as client:

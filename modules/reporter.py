@@ -79,9 +79,13 @@ class Reporter:
     # Matches the finding header BASE_SYSTEM asks for in modules/prompts.py.
     # Anchoring the tally to this line is what stops prose that merely mentions
     # a severity from being counted as a finding.
+    # The bare branch is case-sensitive so "### High level overview" is not
+    # tallied as a finding.
     FINDING_HEADER = re.compile(
-        r"^\s{0,3}#{1,6}\s*\[\s*(critical|high|medium|low|info)\s*\]\s*(.+?)\s*$",
-        re.IGNORECASE,
+        r"^\s{0,3}#{1,6}\s*"
+        r"(?:\[\s*(?i:(critical|high|medium|low|info))\s*\]"
+        r"|(CRITICAL|HIGH|MEDIUM|LOW|INFO)\b)"
+        r"\s*[:.-]?\s*(.+?)\s*$"
     )
 
     # The model is asked to say this instead of emitting headers on a clean
@@ -105,8 +109,9 @@ class Reporter:
             match = self.FINDING_HEADER.match(line)
             if not match:
                 continue
-            counts[match.group(1).capitalize()] += 1
-            title = re.sub(r"\*\*(.*?)\*\*", r"\1", match.group(2)).strip()
+            severity = match.group(1) or match.group(2)
+            counts[severity.capitalize()] += 1
+            title = re.sub(r"\*\*(.*?)\*\*", r"\1", match.group(3)).strip()
             if title and title not in findings:
                 findings.append(title)
 

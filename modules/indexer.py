@@ -180,11 +180,29 @@ class Indexer:
                     "error": str(e),
                 }
 
+    # Playbook material is filed by attack surface, and the folder is what
+    # decides which agents should see it. Detecting from the filename alone
+    # would send most of these to "general", which no agent requests.
+    PLAYBOOK_CATEGORIES = {
+        "attack-surface": "custom",
+        "chains": "writeup",
+        "recon": "target_doc",
+    }
+
     def _detect_category(self, filepath: Path) -> str:
-        """Auto-detect document category from filename/path."""
+        """Detect a document's category from its folder, then its filename."""
+        parts = [p.lower() for p in filepath.parts]
+        if "playbook" in parts:
+            for part in parts[parts.index("playbook") + 1:]:
+                if part in self.PLAYBOOK_CATEGORIES:
+                    return self.PLAYBOOK_CATEGORIES[part]
+
         name = filepath.stem.lower()
         if any(k in name for k in ["cve", "cwe", "nvd"]):
-            return "cve"
+            # No agent declares a "cve" category, so these were indexed and
+            # never retrieved. They describe vulnerability classes, which is
+            # what "custom" already carries.
+            return "custom"
         elif any(k in name for k in ["owasp", "cheat"]):
             return "owasp"
         elif any(k in name for k in ["writeup", "report", "bounty", "poc"]):
@@ -196,4 +214,6 @@ class Indexer:
         elif any(k in name for k in ["api", "doc", "target", "scope"]):
             return "target_doc"
         else:
+            # Nothing requests "general", which is what keeps the report
+            # template out of retrieval.
             return "general"

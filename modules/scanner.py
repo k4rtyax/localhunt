@@ -6,7 +6,7 @@ Handles file discovery and content reading.
 import os
 from pathlib import Path
 from typing import Iterator
-from config import DEFAULT_EXTENSIONS, MAX_FILE_SIZE
+from config import DEFAULT_EXTENSIONS, DEFAULT_FILENAMES, MAX_FILE_SIZE
 
 
 class Scanner:
@@ -24,7 +24,17 @@ class Scanner:
         max_size: int = MAX_FILE_SIZE,
     ):
         self.extensions = [ext.lower() for ext in (extensions or DEFAULT_EXTENSIONS)]
+        # An explicit --ext is taken literally, so the dotfile names apply only
+        # when the defaults are in use.
+        self.filenames = [] if extensions else [n.lower() for n in DEFAULT_FILENAMES]
         self.max_size = max_size
+
+    def wants(self, filepath: Path) -> bool:
+        """Whether a discovered path passes the filter."""
+        return (
+            filepath.suffix.lower() in self.extensions
+            or filepath.name.lower() in self.filenames
+        )
 
     def scan_file(self, path: str | Path) -> dict | None:
         """
@@ -72,7 +82,7 @@ class Scanner:
         recursive: bool = True,
     ) -> Iterator[Path]:
         """
-        Yield the paths that match the extension filter, without reading them.
+        Yield the paths that pass the filter, without reading them.
         Skips hidden dirs, node_modules, .git, dist, etc.
         """
         directory = Path(directory)
@@ -87,11 +97,11 @@ class Scanner:
 
                 for filename in files:
                     filepath = Path(root) / filename
-                    if filepath.suffix.lower() in self.extensions:
+                    if self.wants(filepath):
                         yield filepath
         else:
             for filepath in directory.iterdir():
-                if filepath.is_file() and filepath.suffix.lower() in self.extensions:
+                if filepath.is_file() and self.wants(filepath):
                     yield filepath
 
     def scan_directory(

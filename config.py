@@ -32,16 +32,37 @@ CHUNK_OVERLAP = 60
 REQUEST_TIMEOUT = 300
 MAX_FILE_SIZE = 50_000
 
-# Target file filters
+# Target file filters. This is the discovery filter for every directory scan,
+# and it holds every extension the agents in modules/agents.py declare. A type
+# missing here is never opened, so the agent that exists to read it never runs
+# and the scan still reports a clean result.
 DEFAULT_EXTENSIONS = [
-    ".js", ".ts", ".jsx", ".tsx",
+    ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs",
+    ".vue", ".svelte", ".ejs", ".hbs",
     ".html", ".htm",
     ".php",
     ".py", ".rb",
-    ".java", ".cs", ".go",
+    ".java", ".cs", ".go", ".kt", ".scala",
+    ".sh", ".ps1",
+    ".sql",
     ".json", ".env",
-    ".config", ".xml",
+    ".config", ".conf", ".ini", ".toml", ".xml",
     ".yml", ".yaml",
+]
+
+# Path(".env").suffix is "", not ".env", so a leading-dot name with no second
+# dot can never match the extension filter. These are matched on the full name
+# instead, which is the only way a directory scan reaches the file that most
+# often holds the secrets secrets-hunter is looking for.
+DEFAULT_FILENAMES = [
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    ".htaccess",
 ]
 
 KNOWLEDGE_EXTENSIONS = [".md", ".txt"]

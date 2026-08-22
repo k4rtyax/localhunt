@@ -4,6 +4,9 @@ db/
 # Analysis output - may contain secrets recovered from targets
 reports/
 
+# Working notes and measurement artifacts. Internal material on a public repo.
+archive/
+
 # Local overrides
 .env
 config.local.py

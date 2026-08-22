@@ -1,129 +1,58 @@
 # lokalHunt
 
-Code security analysis utility using local Qwen models via Ollama. Supports local vector retrieval (RAG) using ChromaDB.
+Code security analysis with local Qwen models via Ollama. Nothing leaves the
+machine. Optional local vector retrieval (RAG) through ChromaDB.
 
-Note: This project is in its early stages of development and is currently experimental.
-
----
-
-## Output Workflow
-
-- Full analysis reports are automatically written to markdown (`.md`) files in `reports/` (or a custom path via `-o`).
-- Terminal displays a structured summary indicating findings by severity, key observations, and report location.
-
----
-
-## Architecture
-
-```
-+--------------------+                    +--------------------+
-|    Client Host     |    SSH tunnel      |    Ollama Host     |
-|                    |  -L 11434:11434    |                    |
-|  hunt.py scan      | =================> |  ollama serve      |
-|  ChromaDB (local)  | <================= |  - qwen3:4b        |
-|                    |                    |  - nomic-embed     |
-+--------------------+                    +--------------------+
-```
-
-Both hosts can be the same machine. Ollama stays bound to loopback either way;
-see "Connecting to a remote Ollama" below.
+Note: this project is early stage and experimental.
 
 ---
 
 ## Setup
 
-### 1. Ollama Server
+On the Ollama host:
 
 ```bash
-brew install ollama
 ollama pull qwen3:4b
 ollama pull nomic-embed-text   # only needed for RAG
 ollama serve                   # loopback only, no flags
 ```
 
-### 2. Client
+On the client:
 
 ```powershell
 pip install -r requirements.txt
 python hunt.py check
 ```
 
-`check` verifies the server, the model, and the knowledge base in that order.
-It reports each separately, so a missing embedding model or an uninstalled
-`chromadb` shows up as a warning rather than a failure.
+`check` reports the server, the model and the knowledge base separately, so a
+missing embedding model or an uninstalled `chromadb` shows up as a warning
+rather than a failure.
 
-If Ollama runs on another machine, open a tunnel first (see below) and leave
-the default host alone. `python hunt.py set-host <IP>` is there for the case
-where you deliberately expose the port, and carries the risk described below.
-
-### 3. Optional: skip the RAG stack
-
-`chromadb` accounts for most of the install and is only used by `index`,
-`knowledge`, and the `--rag` flag. Leave it out and everything else still
-works: `index` and `knowledge` exit with an install hint, `--rag` prints a
-warning and scans without retrieval.
+`chromadb` is most of the install and only `index`, `knowledge` and `--rag`
+use it. Leave it out and everything else still works: those two commands exit
+with an install hint, `--rag` warns and scans without retrieval.
 
 ---
 
 ## Usage
 
-### Single File Analysis
-
 ```powershell
-python hunt.py scan --file target.js
-python hunt.py scan --file bundle.js --mode secrets
-python hunt.py scan --file app.js --mode xss
-python hunt.py scan --file payload.js --mode obfuscated
-python hunt.py scan --file target.js -o ./report.md
-python hunt.py scan --file target.js --stream
+python hunt.py swarm -f target.js                      # specialist fleet
+python hunt.py swarm -d .\webapp --ext .js --ext .php
+python hunt.py swarm -f app.py -a secrets-hunter -a sqli-hunter
+python hunt.py swarm -f app.js --stdout-json           # for scripts and CI
+python hunt.py swarm -d .\src --fail-on high           # exit 2 on high+
+
+python hunt.py scan -f target.js --mode secrets        # single prompt
+python hunt.py scan -d .\webapp\ -o ./report.md
+python hunt.py chat --rag                              # interactive
 ```
 
-### Directory Analysis
+`scan` modes: `full`, `secrets`, `xss`, `endpoints`, `obfuscated`, `sqli`.
 
-```powershell
-python hunt.py scan --dir C:\path\to\webapp\
-python hunt.py scan --dir .\webapp\ --ext .js --ext .php
-```
-
-### Retrieval-Augmented Generation (RAG)
-
-```powershell
-# Index reference documents from knowledge/
-python hunt.py index
-
-# Scan with RAG context enabled
-python hunt.py scan --file target.js --rag
-
-# Manage knowledge base
-python hunt.py knowledge --list
-python hunt.py knowledge --search "prototype pollution"
-python hunt.py knowledge --add ./writeup.md
-```
-
-Documents are filed into categories from their filename (`owasp`, `malware`,
-`custom`, `cve`, `writeup`, `target_doc`), and each swarm agent reads only the
-categories that concern it, so `deobfuscator` is not fed access-control notes.
-A document that matches nothing is filed as `general` and no agent retrieves
-it, which is where report templates belong.
-
-In `swarm`, the retrieval query is the agent's topic plus the regex signals
-actually found in the file being scanned, so two files pull different context.
-
-`nomic-embed-text` is sent the `search_document` and `search_query` prefixes it
-was trained with. Any index built before that change must be rebuilt with
-`python hunt.py index --force`.
-
-The knowledge base ships with three short documents. Retrieval only begins to
-earn its cost once there is enough material for ranking to mean something;
-target-specific notes and real writeups are worth more here than restatements
-of OWASP, which the model already knows.
-
-### Interactive Session
-
-```powershell
-python hunt.py chat
-python hunt.py chat --rag
-```
+Reports are written to `reports/` as paired `.md` and `.json`, with a severity
+summary on the terminal. That directory is gitignored: findings routinely
+contain live secrets.
 
 ---
 
@@ -141,14 +70,7 @@ VERIFY  an adversarial skeptic tries to refute each finding
 SYNTH   one triage pass writes the summary
 ```
 
-```powershell
-python hunt.py agents                                  # list the specialists
-python hunt.py swarm -f target.js                      # auto-select agents
-python hunt.py swarm -d .\webapp --ext .js --ext .php
-python hunt.py swarm -f app.py -a secrets-hunter -a sqli-hunter
-python hunt.py swarm -f app.js --stdout-json           # for scripts and CI
-python hunt.py swarm -d .\src --fail-on high           # exit 2 on high+
-```
+`python hunt.py agents` prints the fleet:
 
 | Agent             | Covers                                                       |
 | ----------------- | ------------------------------------------------------------ |
@@ -164,38 +86,33 @@ python hunt.py swarm -d .\src --fail-on high           # exit 2 on high+
 | `skeptic`         | Adversarial verifier - refutes findings the finders produced |
 | `triage-lead`     | Merges what survived into an executive summary               |
 
-Every finding carries `verdict`, `confidence`, and `unverified_evidence` - the
+Every finding carries `verdict`, `confidence` and `unverified_evidence` - the
 last one flags a citation that could not be located in the source file, which
 is the cheapest way to catch a model that invented its evidence.
 
-`verdict` is `real`, `refuted`, or `unverified`:
-
-| Verdict      | Meaning                                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------------------------------ |
-| `real`       | The skeptic tried to refute it and could not                                                                 |
-| `refuted`    | The skeptic showed the flaw is not present, and the finding is dropped from the findings list into `refuted` |
-| `unverified` | The skeptic's refutation was thrown out, or the verifier itself crashed. The finding is kept                 |
+| Verdict      | Meaning                                                                     |
+| ------------ | --------------------------------------------------------------------------- |
+| `real`       | The skeptic tried to refute it and could not                                |
+| `refuted`    | The skeptic showed the flaw is not present; the finding moves to `refuted`  |
+| `unverified` | The refutation was thrown out, or the verifier crashed; the finding is kept |
 
 A refutation is thrown out when it rests on what the file _is_ rather than on
-what the code _does_: that it is a demo, a test, a fixture, or not production.
-The skeptic prompt directs that judgement to `adjusted_severity` instead, but a
-4B model ignores the rule often enough that it is enforced in code rather than
-trusted to the prompt. The proposed severity is still applied, so the finding
-survives at a lower rank with the verifier's own words recorded in
-`verdict_reason`. Run stats count these as `verify_overridden`.
+what the code _does_: a demo, a test, a fixture, not production. The skeptic
+prompt directs that judgement to `adjusted_severity` instead, but a 4B model
+ignores the rule often enough that it is enforced in code. The proposed
+severity is still applied, so the finding survives at a lower rank with the
+verifier's own words in `verdict_reason`. Run stats count these as
+`verify_overridden`.
 
-`VERIFIER_VOTES` in `config.py` sets how many skeptics vote per finding. It
-ships at 1, where a single confused vote decides everything. Raise it to 3 for
-a real majority at three times the verification cost.
-
-Reports are written to `reports/` as paired `.md` and `.json`. That directory
-is gitignored: findings routinely contain live secrets.
+Tuning lives in `config.py` and is commented there rather than here:
+`VERIFIER_VOTES`, `MIN_CONFIDENCE`, `SWARM_CONCURRENCY`, `NUM_CTX`,
+`RESERVE_OUTPUT_TOKENS`.
 
 ### Resource notes
 
 Ollama allocates `num_ctx x OLLAMA_NUM_PARALLEL` of KV cache on top of the
-model. For `qwen3:4b` at the default `NUM_CTX = 8192` that is roughly 1.2 GB
-per parallel slot in f16, plus 2.5 GB for the weights. The shipped defaults
+weights. For `qwen3:4b` at the default `NUM_CTX = 8192` that is roughly 1.2 GB
+per parallel slot in f16, plus 2.5 GB for the model. The shipped defaults
 (concurrency 2) are sized for an 8 GB host. Drop to `--concurrency 1` if the
 machine starts swapping.
 
@@ -209,16 +126,53 @@ OLLAMA_NUM_PARALLEL=2         # unset means Ollama picks, which may exceed
                               # what --concurrency assumes
 ```
 
-`RESERVE_OUTPUT_TOKENS` holds back part of `NUM_CTX` for the model's own
-answer; code windows are clamped to whatever is left, and `swarm` prints that
-budget in its plan panel.
+---
+
+## Knowledge base (RAG)
+
+```powershell
+python hunt.py index                                # index knowledge/
+python hunt.py scan -f target.js --rag
+python hunt.py knowledge --list
+python hunt.py knowledge --search "prototype pollution"
+python hunt.py knowledge --add ./writeup.md
+```
+
+`knowledge/` holds three pattern notes, a report template, and `playbook/`:
+133 generic technique notes filed by attack surface (90 under Attack-Surface,
+24 Recon, 19 Chains).
+
+Documents are filed into categories by folder first, then by filename. The
+playbook folders map to `custom`, `writeup` and `target_doc`; anything outside
+them is detected from the name. Each swarm agent reads only the categories
+that concern it, so `deobfuscator` is not fed access-control notes. A document
+that matches nothing is filed as `general` and no agent retrieves it, which is
+where report templates belong.
+
+In `swarm`, the retrieval query is the agent's topic plus the regex signals
+actually found in the file being scanned, so two files pull different context.
+
+`nomic-embed-text` is sent the `search_document` and `search_query` prefixes
+it was trained with. Any index built before that change must be rebuilt with
+`python hunt.py index --force`.
 
 ---
 
-## Connecting to a remote Ollama
+## Remote Ollama
 
-Ollama has no authentication, so binding it to `0.0.0.0` exposes the model and
-every prompt to anyone who can route to the port. An SSH tunnel is safer and
+```
++--------------------+                    +--------------------+
+|    Client Host     |    SSH tunnel      |    Ollama Host     |
+|                    |  -L 11434:11434    |                    |
+|  hunt.py scan      | =================> |  ollama serve      |
+|  ChromaDB (local)  | <================= |  - qwen3:4b        |
+|                    |                    |  - nomic-embed     |
++--------------------+                    +--------------------+
+```
+
+Both hosts can be the same machine, and Ollama stays bound to loopback either
+way. It has no authentication, so binding it to `0.0.0.0` exposes the model
+and every prompt to anyone who can route to the port. A tunnel is safer and
 needs no server-side change:
 
 ```powershell
@@ -226,33 +180,21 @@ ssh -N -L 11434:127.0.0.1:11434 user@host
 ```
 
 The default host is `127.0.0.1`, so nothing else needs configuring. Override
-without editing source via `LOKALHUNT_HOST`, `LOKALHUNT_PORT`, or
-`OLLAMA_BASE_URL`.
+via `LOKALHUNT_HOST`, `LOKALHUNT_PORT` or `OLLAMA_BASE_URL`. `set-host` is
+there for the case where you deliberately expose the port, and carries the
+risk above.
 
 ---
 
-## Analysis Modes
-
-| Mode         | Target Scope                               |
-| ------------ | ------------------------------------------ |
-| `full`       | Comprehensive review                       |
-| `secrets`    | Hardcoded keys, tokens, credentials        |
-| `xss`        | DOM sinks, sources, injection vectors      |
-| `endpoints`  | Route definitions, internal APIs           |
-| `obfuscated` | Deobfuscation and script behavior          |
-| `sqli`       | Query concatenation and injection patterns |
-
----
-
-## Project Structure
+## Layout
 
 ```
-localhunt/
+lokalHunt/
 ├── hunt.py              CLI: check, set-host, index, knowledge, scan, chat,
 │                        agents, swarm
 ├── config.py            hosts, models, budgets, thresholds
 ├── requirements.txt
-├── knowledge/           RAG source documents (.md / .txt)
+├── knowledge/           RAG sources; playbook/ holds the technique notes
 ├── modules/
 │   ├── agents.py        AgentSpec registry: the specialists and their prompts
 │   ├── orchestrator.py  Swarm: plan, hunt, sift, verify, synth

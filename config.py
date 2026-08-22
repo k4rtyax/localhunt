@@ -15,7 +15,7 @@ OLLAMA_PORT = int(os.getenv("LOKALHUNT_PORT", "11434"))
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL") or f"http://{MAC_IP}:{OLLAMA_PORT}"
 
 # Model configuration
-DEFAULT_MODEL = "qwen3:4b"
+DEFAULT_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
 EMBEDDING_MODEL = "nomic-embed-text"
 
 # Storage and path configuration

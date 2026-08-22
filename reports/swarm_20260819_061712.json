@@ -1,0 +1,57 @@
+{
+  "files": [
+    "vuln.js"
+  ],
+  "agents_run": [
+    "secrets-hunter"
+  ],
+  "counts": {
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 1,
+    "info": 0
+  },
+  "worst_severity": "low",
+  "summary": {},
+  "stats": {
+    "files": 1,
+    "agent_calls": 1,
+    "windows": 1,
+    "code_tokens": 50,
+    "context_budget": 6144,
+    "raw_findings": 1,
+    "unique_findings": 1,
+    "confirmed": 1,
+    "refuted": 0,
+    "verify_overridden": 1
+  },
+  "findings": [
+    {
+      "title": "API key exposed in source code",
+      "severity": "low",
+      "category": "api_key",
+      "line": 1,
+      "evidence": "const API_KEY = \"sk-proj-4kR9mZq2XvB7nLpT8wYcE1dHfJ6sA3gU\";",
+      "impact": "This API key is a valid Stripe API key with high privileges. It can be used to make unauthorized transactions, access user data, and perform other sensitive operations.",
+      "remediation": "Remove the API key from source code and store it securely using environment variables or a secrets management service. Do not commit the key to version control.",
+      "confidence": 0.99,
+      "file": "vuln.js",
+      "cwe": "",
+      "agent": "secrets-hunter",
+      "unverified_evidence": false,
+      "votes": [
+        {
+          "real": false,
+          "reason": "The evidence line is a hardcoded API key string that is not attacker-controlled and is not used in a vulnerable context. The key is a valid Stripe API key but it's a hardcoded example (not a real key) and the code is a demo fixture. The project is small and not production code. The key is a published documentation sample (Stripe's example key format) and not a real key. The code path is dead (only renders a hash) and the key is never used in a sink.",
+          "adjusted_severity": "low",
+          "policy_override": true
+        }
+      ],
+      "verdict": "unverified",
+      "verdict_reason": "Refuted on out-of-bounds grounds (what the file is, not what the code does), so the refutation was discarded and this finding is kept for a human. Verifier said: The evidence line is a hardcoded API key string that is not attacker-controlled and is not used in a vulnerable context. The key is a valid Stripe API key but it's a hardcoded example (not a real key) and the code is a demo fixture. The pr..."
+    }
+  ],
+  "refuted": [],
+  "errors": []
+}

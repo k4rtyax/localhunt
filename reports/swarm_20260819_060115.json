@@ -1,0 +1,49 @@
+{
+  "files": [
+    "vuln.js"
+  ],
+  "agents_run": [
+    "xss-hunter"
+  ],
+  "counts": {
+    "critical": 0,
+    "high": 1,
+    "medium": 0,
+    "low": 0,
+    "info": 0
+  },
+  "worst_severity": "high",
+  "summary": {},
+  "stats": {
+    "files": 1,
+    "agent_calls": 1,
+    "windows": 1,
+    "code_tokens": 50,
+    "context_budget": 6144,
+    "raw_findings": 1,
+    "unique_findings": 1,
+    "confirmed": 1,
+    "refuted": 0
+  },
+  "findings": [
+    {
+      "title": "XSS via location.hash",
+      "severity": "high",
+      "category": "client-side injection",
+      "line": 2,
+      "evidence": "document.getElementById(\"out\").innerHTML = location.hash.slice(1);",
+      "impact": "The `location.hash` is a source that can be controlled by the attacker via the URL. The `innerHTML` sink is vulnerable to XSS when the `location.hash` contains malicious content. This allows an attacker to inject arbitrary HTML into the page.",
+      "remediation": "Use a safe method to handle the hash, such as sanitizing the hash before setting it to `innerHTML` or using a different DOM manipulation technique that doesn't allow arbitrary HTML injection.",
+      "confidence": 0.9,
+      "file": "vuln.js",
+      "cwe": "",
+      "agent": "xss-hunter",
+      "unverified_evidence": false,
+      "votes": [],
+      "verdict": "unverified",
+      "verdict_reason": ""
+    }
+  ],
+  "refuted": [],
+  "errors": []
+}

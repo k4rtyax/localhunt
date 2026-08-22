@@ -1,0 +1,152 @@
+{
+  "files": [
+    "vuln_target.js"
+  ],
+  "agents_run": [
+    "secrets-hunter",
+    "sqli-hunter"
+  ],
+  "counts": {
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "info": 0
+  },
+  "worst_severity": null,
+  "summary": {
+    "summary": "No findings survived verification for vuln_target.js. The scan confirmed no security issues in the provided file.",
+    "risk_level": "low",
+    "top_priorities": []
+  },
+  "stats": {
+    "files": 1,
+    "agent_calls": 2,
+    "windows": 1,
+    "code_tokens": 469,
+    "context_budget": 6144,
+    "raw_findings": 5,
+    "unique_findings": 5,
+    "confirmed": 0,
+    "refuted": 5
+  },
+  "findings": [],
+  "refuted": [
+    {
+      "title": "Hardcoded AWS Access Key",
+      "severity": "high",
+      "category": "cloud_credentials",
+      "line": 6,
+      "evidence": "const AWS_ACCESS_KEY_ID = \"AKIAIOSFODNN7EXAMPLE\";",
+      "impact": "This hardcoded AWS access key is visible in the source code and is a real AWS access key (AKIAIOSFODNN7EXAMPLE is a known AWS example key).",
+      "remediation": "Remove the hardcoded AWS access key and use environment variables or secure secret management services to store credentials.",
+      "confidence": 0.95,
+      "file": "vuln_target.js",
+      "cwe": "",
+      "agent": "secrets-hunter",
+      "unverified_evidence": false,
+      "votes": [
+        {
+          "real": false,
+          "reason": "The finding claims that the AWS access key is hardcoded and real. However, the value 'AKIAIOSFODNN7EXAMPLE' is a known AWS example key (not a real key) used for demonstration purposes. The code is a deliberately vulnerable sample for testing, and the key is explicitly marked as an example in the comment above line 1. The value is not a live secret but a placeholder for demonstration. The finding also incorrectly states that it's a real AWS access key when it's actually a known example key that is safe to use in examples.",
+          "adjusted_severity": "low"
+        }
+      ],
+      "verdict": "refuted",
+      "verdict_reason": "The finding claims that the AWS access key is hardcoded and real. However, the value 'AKIAIOSFODNN7EXAMPLE' is a known AWS example key (not a real key) used for demonstration purposes. The code is a deliberately vulnerable sample for testing, and the key is explicitly marked as an example in the comment above line 1. The value is not a live secret but a placeholder for demonstration. The finding also incorrectly states that it's a real AWS access key when it's actually a known example key that is safe to use in examples."
+    },
+    {
+      "title": "Hardcoded AWS Secret Access Key",
+      "severity": "high",
+      "category": "cloud_credentials",
+      "line": 7,
+      "evidence": "const AWS_SECRET_ACCESS_KEY = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\";",
+      "impact": "This hardcoded AWS secret access key is visible in the source code and is a real AWS secret key (wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY is a known AWS example key).",
+      "remediation": "Remove the hardcoded AWS secret access key and use environment variables or secure secret management services to store credentials.",
+      "confidence": 0.95,
+      "file": "vuln_target.js",
+      "cwe": "",
+      "agent": "secrets-hunter",
+      "unverified_evidence": false,
+      "votes": [
+        {
+          "real": false,
+          "reason": "The finding claims a hardcoded AWS secret access key is visible in the source code. However, the provided code shows that the key is defined as a constant with a known example value. The value 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY' is a well-known AWS example key used for demonstration purposes (not a real secret). The finding states it's a 'real' AWS secret key, but this is a placeholder for testing. The code is explicitly labeled as a 'deliberately vulnerable sample' for smoke testing, so it's not a live secret. The evidence is a known example key, not a live secret. The code is also a test fixture, so it's not a real vulnerability.",
+          "adjusted_severity": "low"
+        }
+      ],
+      "verdict": "refuted",
+      "verdict_reason": "The finding claims a hardcoded AWS secret access key is visible in the source code. However, the provided code shows that the key is defined as a constant with a known example value. The value 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY' is a well-known AWS example key used for demonstration purposes (not a real secret). The finding states it's a 'real' AWS secret key, but this is a placeholder for testing. The code is explicitly labeled as a 'deliberately vulnerable sample' for smoke testing, so it's not a live secret. The evidence is a known example key, not a live secret. The code is also a test fixture, so it's not a real vulnerability."
+    },
+    {
+      "title": "Hardcoded MySQL Database Connection String",
+      "severity": "high",
+      "category": "database_connection_strings",
+      "line": 8,
+      "evidence": "const DB_URL = \"mysql://root:SuperSecret123@10.0.0.14:3306/prod\";",
+      "impact": "This hardcoded MySQL database connection string contains a password (SuperSecret123) which is a real password (it's a common example password).",
+      "remediation": "Remove the hardcoded database connection string and use environment variables or secure secret management services to store database credentials.",
+      "confidence": 0.95,
+      "file": "vuln_target.js",
+      "cwe": "",
+      "agent": "secrets-hunter",
+      "unverified_evidence": false,
+      "votes": [
+        {
+          "real": false,
+          "reason": "The finding claims a hardcoded MySQL database connection string with a real password. However, the evidence provided is a placeholder value (SuperSecret123) which is not a real password but a common example password used in demonstrations. The code is intentionally vulnerable for testing purposes, and the value is explicitly marked as a placeholder in the surrounding context. Additionally, the code uses a vulnerable query construction method (string concatenation) which is a separate issue but not the focus of this finding. The value 'SuperSecret123' is an obvious placeholder rather than a live secret, so it does not constitute a real password.",
+          "adjusted_severity": "low"
+        }
+      ],
+      "verdict": "refuted",
+      "verdict_reason": "The finding claims a hardcoded MySQL database connection string with a real password. However, the evidence provided is a placeholder value (SuperSecret123) which is not a real password but a common example password used in demonstrations. The code is intentionally vulnerable for testing purposes, and the value is explicitly marked as a placeholder in the surrounding context. Additionally, the code uses a vulnerable query construction method (string concatenation) which is a separate issue but not the focus of this finding. The value 'SuperSecret123' is an obvious placeholder rather than a live secret, so it does not constitute a real password."
+    },
+    {
+      "title": "SQL Injection via string concatenation in /api/user/:id route",
+      "severity": "high",
+      "category": "sql-injection",
+      "line": 17,
+      "evidence": "const q = \"SELECT * FROM users WHERE id = \" + req.params.id;",
+      "impact": "User can inject SQL code via the :id parameter to manipulate the database query, potentially leading to data theft, unauthorized access, or database destruction.",
+      "remediation": "Use parameterized queries instead of string concatenation. For example: db.query('SELECT * FROM users WHERE id = ?', [req.params.id]);",
+      "confidence": 1.0,
+      "file": "vuln_target.js",
+      "cwe": "",
+      "agent": "sqli-hunter",
+      "unverified_evidence": false,
+      "votes": [
+        {
+          "real": false,
+          "reason": "The finding claims SQL injection via string concatenation in the code at line 17. However, the code at line 17 is a deliberately vulnerable sample for testing purposes. The surrounding code shows that this is a smoke-test environment, not a live application. The `req.params.id` is a string that is being concatenated directly into a SQL query without validation or escaping. However, the context of the code is explicitly stated as a 'deliberately vulnerable sample used to smoke-test the lokalHunt swarm' (line 1). This means the code is not meant to be used in production but is a test fixture. According to the ground rules, test fixtures and examples are not findings. The evidence provided is a verbatim copy of the code at line 17, which is part of the test code. The finding is not real because it's a test fixture and not live code.",
+          "adjusted_severity": "low"
+        }
+      ],
+      "verdict": "refuted",
+      "verdict_reason": "The finding claims SQL injection via string concatenation in the code at line 17. However, the code at line 17 is a deliberately vulnerable sample for testing purposes. The surrounding code shows that this is a smoke-test environment, not a live application. The `req.params.id` is a string that is being concatenated directly into a SQL query without validation or escaping. However, the context of the code is explicitly stated as a 'deliberately vulnerable sample used to smoke-test the lokalHunt swarm' (line 1). This means the code is not meant to be used in production but is a test fixture. According to the ground rules, test fixtures and examples are not findings. The evidence provided is a verbatim copy of the code at line 17, which is part of the test code. The finding is not real because it's a test fixture and not live code."
+    },
+    {
+      "title": "SQL Injection via template literals in /api/search route",
+      "severity": "high",
+      "category": "sql-injection",
+      "line": 22,
+      "evidence": "db.query(`SELECT * FROM items WHERE name LIKE '%${req.query.q}%'`, (e, r) => res.json(r));",
+      "impact": "User can inject SQL code via the 'q' query parameter to manipulate the database query, potentially leading to data theft, unauthorized access, or database destruction.",
+      "remediation": "Use parameterized queries with a safe search pattern. For example: db.query('SELECT * FROM items WHERE name LIKE ?', [`%${req.query.q}%`]);",
+      "confidence": 0.4,
+      "file": "vuln_target.js",
+      "cwe": "",
+      "agent": "sqli-hunter",
+      "unverified_evidence": true,
+      "votes": [
+        {
+          "real": false,
+          "reason": "The evidence provided by the finding is not found in the source file. The reported line number (22) does not match the actual code structure. The code at line 22 is a template literal that uses a string interpolation with `req.query.q`, but the finding claims it's a SQL injection vulnerability. However, the code uses a template literal with a string interpolation that is not safe for SQL injection. The issue is that the code does not use parameterized queries or escaping for the query parameter. The finding is fabricated because the evidence string does not match the actual code in the file. The code at line 22 is: `db.query(`SELECT * FROM items WHERE name LIKE '%${req.query.q}%'`, (e, r) => res.json(r));` which is vulnerable to SQL injection. However, the finding states that the evidence was NOT found in the source file, which is a strong sign of fabrication. The code is vulnerable to SQL injection, but the finding is not real because the evidence string does not match the actual code in the file.",
+          "adjusted_severity": "medium"
+        }
+      ],
+      "verdict": "refuted",
+      "verdict_reason": "The evidence provided by the finding is not found in the source file. The reported line number (22) does not match the actual code structure. The code at line 22 is a template literal that uses a string interpolation with `req.query.q`, but the finding claims it's a SQL injection vulnerability. However, the code uses a template literal with a string interpolation that is not safe for SQL injection. The issue is that the code does not use parameterized queries or escaping for the query parameter. The finding is fabricated because the evidence string does not match the actual code in the file. The code at line 22 is: `db.query(`SELECT * FROM items WHERE name LIKE '%${req.query.q}%'`, (e, r) => res.json(r));` which is vulnerable to SQL injection. However, the finding states that the evidence was NOT found in the source file, which is a strong sign of fabrication. The code is vulnerable to SQL injection, but the finding is not real because the evidence string does not match the actual code in the file."
+    }
+  ],
+  "errors": []
+}

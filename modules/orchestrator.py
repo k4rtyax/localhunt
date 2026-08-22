@@ -418,6 +418,9 @@ class Swarm:
 
         finding.votes = votes
         real_votes = sum(1 for v in votes if v["real"])
+        # Strict majority: more than half must call it real, so a tie (possible
+        # only with an even vote count) falls to refuted. With one vote this is
+        # just that vote, not a majority of anything.
         finding.verdict = "real" if real_votes * 2 > len(votes) else "refuted"
         finding.verdict_reason = next(
             (v["reason"] for v in votes if v["real"] == (finding.verdict == "real")),

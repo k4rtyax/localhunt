@@ -75,7 +75,11 @@ CHUNK_OVERLAP_LINES = 12
 # Keep aligned with OLLAMA_NUM_PARALLEL and the KV cache budget above.
 SWARM_CONCURRENCY = 2
 
-# Skeptic verifiers per finding. Use an odd number for a clean majority.
+# Skeptic verifiers per finding. 1 means a single skeptic decides; that is not
+# a majority, it is just the one vote. Raising this only helps if the votes
+# disagree, but the skeptic runs at temperature 0.0 (SKEPTIC in
+# modules/agents.py), so extra votes come back near-identical and mostly add
+# cost on an 8 GB host. Measure on a target with known findings before raising.
 VERIFIER_VOTES = 1
 
 # Findings below this confidence are dropped before the verify phase.

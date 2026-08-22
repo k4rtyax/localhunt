@@ -41,6 +41,38 @@ def number_lines(content: str, start: int = 1) -> str:
     )
 
 
+# A cut inside a line lands mid-token or mid-literal, so consecutive slices
+# share this fraction of their width. A construct straddling one cut still
+# appears whole in the neighbouring slice.
+_SLICE_OVERLAP = 0.15
+
+
+def split_long_line(line: str, max_tokens: int) -> Iterator[str]:
+    """
+    Cut one oversized line into overlapping character slices that each fit in
+    max_tokens. Used only where line-boundary splitting cannot reduce further.
+    """
+    tokens = count_tokens(line)
+    if tokens <= max_tokens:
+        yield line
+        return
+
+    # Measure this line's own density instead of assuming one, since packed
+    # source and prose differ by several characters per token.
+    per_token = max(len(line) / tokens, 1.0)
+    width = max(int(max_tokens * per_token), 1)
+
+    start = 0
+    while start < len(line):
+        piece = line[start:start + width]
+        while len(piece) > 1 and count_tokens(piece) > max_tokens:
+            piece = piece[:max(len(piece) * 7 // 8, 1)]
+        yield piece
+        if start + len(piece) >= len(line):
+            break
+        start += max(int(len(piece) * (1 - _SLICE_OVERLAP)), 1)
+
+
 def window_by_lines(
     content: str,
     max_tokens: int,
@@ -72,7 +104,16 @@ def window_by_lines(
             end -= max(1, (end - idx) // 8)
             chunk = "\n".join(lines[idx:end])
 
-        yield idx + 1, chunk
+        if count_tokens(chunk) > max_tokens:
+            # The window is down to a single line that still does not fit, so
+            # line boundaries have nothing left to give. This is the ordinary
+            # shape of minified and packed source, the input the deobfuscator
+            # exists for, so cut inside the line rather than hand the model a
+            # chunk the server would otherwise truncate in silence.
+            for piece in split_long_line(chunk, max_tokens):
+                yield idx + 1, piece
+        else:
+            yield idx + 1, chunk
 
         if end >= len(lines):
             break

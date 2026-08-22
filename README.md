@@ -54,6 +54,10 @@ Reports are written to `reports/` as paired `.md` and `.json`, with a severity
 summary on the terminal. That directory is gitignored: findings routinely
 contain live secrets.
 
+`swarm` exits 2 when `--fail-on` trips, and 3 when every agent call failed. The
+second one matters more than it looks: a run that analysed nothing would
+otherwise report a clean result.
+
 ---
 
 ## Agent Swarm
@@ -96,12 +100,15 @@ is the cheapest way to catch a model that invented its evidence.
 | `refuted`    | The skeptic showed the flaw is not present; the finding moves to `refuted`  |
 | `unverified` | The refutation was thrown out, or the verifier crashed; the finding is kept |
 
-A refutation is thrown out when it rests on what the file _is_ rather than on
-what the code _does_: a demo, a test, a fixture, not production. The skeptic
-prompt directs that judgement to `adjusted_severity` instead, but a 4B model
-ignores the rule often enough that it is enforced in code. The proposed
-severity is still applied, so the finding survives at a lower rank with the
-verifier's own words in `verdict_reason`. Run stats count these as
+A refutation is thrown out on either of two grounds. The first is resting on
+what the file _is_ rather than on what the code _does_: a demo, a test, a
+fixture, not production, or a secret excused because the file is a `.env` that
+nobody committed. The second is contradicting itself, since a 4B skeptic will
+reason its way to "the finding is real" and then return a refutation anyway.
+The skeptic prompt directs the first judgement to `adjusted_severity` instead,
+but the model ignores the rule often enough that both are enforced in code.
+The proposed severity is still applied, so the finding survives at a lower rank
+with the verifier's own words in `verdict_reason`. Run stats count these as
 `verify_overridden`.
 
 Tuning lives in `config.py` and is commented there rather than here:

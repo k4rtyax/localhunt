@@ -15,6 +15,10 @@ from config import REPORTS_DIR, THEME
 
 console = Console()
 
+# Diagnostics go to stderr so they never land in front of a result document on
+# stdout, which is what swarm --stdout-json puts there for a machine to read.
+err_console = Console(stderr=True)
+
 # Severity rows, in the order both summary panels render them.
 SEVERITY_ROWS = [
     ("Critical", THEME["critical"]),
@@ -50,7 +54,7 @@ class Reporter:
         )
 
     def print_connection_error(self, message: str):
-        console.print(
+        err_console.print(
             Panel(
                 f"Connection failed:\n\n{message}",
                 border_style="red",
@@ -200,13 +204,13 @@ class Reporter:
         )
 
     def print_skipped(self, filename: str, reason: str):
-        console.print(f"  [dim]Skipped {filename} ({reason})[/dim]")
+        err_console.print(f"  [dim]Skipped {filename} ({reason})[/dim]")
 
     def print_error(self, message: str):
-        console.print(f"\n[{THEME['critical']}]Error:[/{THEME['critical']}] {message}")
+        err_console.print(f"\n[{THEME['critical']}]Error:[/{THEME['critical']}] {message}")
 
     def print_warning(self, message: str):
-        console.print(f"[{THEME['medium']}]Warning:[/{THEME['medium']}] {message}")
+        err_console.print(f"[{THEME['medium']}]Warning:[/{THEME['medium']}] {message}")
 
     def save_single_report(
         self,

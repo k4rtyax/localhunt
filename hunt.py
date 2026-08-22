@@ -22,7 +22,7 @@ from config import (
 )
 from modules.analyzer import Analyzer
 from modules.scanner import Scanner
-from modules.reporter import Reporter
+from modules.reporter import Reporter, err_console
 from modules.prompts import AVAILABLE_MODES
 
 # Redirected stdout defaults to cp1252 on Windows, which cannot encode the
@@ -97,9 +97,9 @@ def cmd_check(host, model):
         reporter.print_connection_error(msg)
         console.print(
             "\n[dim]Ensure Ollama is running on the host:[/dim]\n"
-            "[yellow]  OLLAMA_HOST=0.0.0.0 ollama serve[/yellow]\n"
-            "[dim]Set host IP via:[/dim]\n"
-            "  python hunt.py set-host <IP>"
+            "[yellow]  ollama serve[/yellow]\n"
+            "[dim]If it runs on another machine, tunnel to it:[/dim]\n"
+            "[yellow]  ssh -N -L 11434:127.0.0.1:11434 user@host[/yellow]"
         )
         sys.exit(1)
 
@@ -683,11 +683,11 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
     import json as _json
     from config import SWARM_CONCURRENCY, VERIFIER_VOTES
     from modules.llm import OllamaClient
-    from modules.orchestrator import Swarm
+    from modules.orchestrator import Swarm, SwarmResult
     from modules.schema import SEVERITY_RANK
 
     if not filepath and not directory:
-        console.print("[red]Specify --file or --dir[/red]")
+        err_console.print("[red]Specify --file or --dir[/red]")
         sys.exit(1)
 
     quiet = stdout_json
@@ -695,6 +695,11 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
     reporter = Reporter()
     if not quiet:
         reporter.print_banner(model, url)
+
+    def emit_json(res):
+        """Under --stdout-json, stdout carries one JSON document and nothing else."""
+        if stdout_json:
+            click.echo(_json.dumps(res.to_dict(), indent=2, ensure_ascii=False))
 
     client = OllamaClient(model=model, base_url=url)
     ok, msg = client.check()
@@ -727,6 +732,7 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
 
     if not files:
         reporter.print_warning("No matching files found.")
+        emit_json(SwarmResult())
         sys.exit(0)
 
 
@@ -735,11 +741,11 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
         try:
             rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
         except RAGUnavailable as e:
-            console.print("[yellow]" + str(e) + "[/yellow]")
-            console.print("[dim]Running without RAG.[/dim]")
+            err_console.print("[yellow]" + str(e) + "[/yellow]")
+            err_console.print("[dim]Running without RAG.[/dim]")
         else:
             if rag_engine.count() == 0:
-                console.print("[yellow]Knowledge base is empty; running without RAG.[/yellow]")
+                err_console.print("[yellow]Knowledge base is empty; running without RAG.[/yellow]")
                 rag_engine = None
 
     swarm = Swarm(
@@ -792,6 +798,7 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
 
     if not tasks:
         reporter.print_warning("No agent matched these files.")
+        emit_json(SwarmResult(files=[f["name"] for f in files]))
         sys.exit(0)
     progress.update(hunt_task, total=len(tasks))
 
@@ -812,7 +819,7 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
                 tasks=tasks,
             )
     except KeyboardInterrupt:
-        console.print("\n[yellow]Swarm interrupted by user.[/yellow]")
+        err_console.print("\n[yellow]Swarm interrupted by user.[/yellow]")
         sys.exit(130)
     finally:
         client.close()
@@ -824,6 +831,22 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
         report_path = reporter.save_swarm_report(result, output_path=output)
         saved_json = reporter.save_swarm_json(result, output_path=json_path)
         reporter.print_swarm_result(result, report_path, saved_json)
+
+    # A run where every agent call failed analysed nothing. Reporting that as a
+    # clean scan is the worst outcome the tool can produce, so it exits 3 and
+    # never reaches the --fail-on gate, which would otherwise pass it.
+    calls = result.stats.get("agent_calls", 0)
+    failures = result.stats.get("agent_failures", 0)
+    if failures and failures >= calls:
+        reporter.print_error(
+            f"All {calls} agent calls failed. Nothing was analysed; this is not "
+            "a clean result."
+        )
+        sys.exit(3)
+    if failures:
+        reporter.print_warning(
+            f"{failures} of {calls} agent calls failed. This scan is incomplete."
+        )
 
     if fail_on:
         threshold = SEVERITY_RANK[fail_on]

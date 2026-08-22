@@ -195,7 +195,7 @@ class OllamaClient:
         except httpx.ConnectError:
             return False, (
                 f"Cannot reach Ollama at {self.base_url}.\n"
-                "Start it with: OLLAMA_HOST=0.0.0.0 ollama serve"
+                "Start it with: ollama serve"
             )
         except Exception as e:
             return False, str(e)

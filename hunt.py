@@ -690,6 +690,15 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
         err_console.print("[red]Specify --file or --dir[/red]")
         sys.exit(1)
 
+    # The gate reads verdicts, so a run that verifies nothing can never trip
+    # it. Say so now rather than exit 0 on an unexamined scan.
+    if fail_on and (no_verify or (votes is not None and votes < 1)):
+        err_console.print(
+            "[red]--fail-on gates on confirmed findings, and this run verifies "
+            "none. Drop --no-verify, or drop --fail-on.[/red]"
+        )
+        sys.exit(1)
+
     quiet = stdout_json
     url = host or OLLAMA_BASE_URL
     reporter = Reporter()
@@ -850,7 +859,12 @@ def cmd_swarm(filepath, directory, only_agents, all_agents, no_verify, no_summar
 
     if fail_on:
         threshold = SEVERITY_RANK[fail_on]
-        if any(f.rank <= threshold for f in result.findings):
+        # Only a confirmed finding fails the build. A finding kept as
+        # unverified is one the tool declined to stand behind, whether the
+        # verifier crashed or its refutation was thrown out, and confirmation
+        # is what this flag promises to gate on.
+        if any(f.rank <= threshold and f.verdict == "real"
+               for f in result.findings):
             sys.exit(2)
 
 

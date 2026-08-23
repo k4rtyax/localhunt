@@ -12,7 +12,7 @@ Note: this project is early stage and experimental.
 On the Ollama host:
 
 ```bash
-ollama pull qwen3:4b
+ollama pull qwen3:4b-instruct-2507-q4_K_M
 ollama pull nomic-embed-text   # only needed for RAG
 ollama serve                   # loopback only, no flags
 ```
@@ -129,8 +129,8 @@ Two server-side settings change that arithmetic and are worth checking with
 ```bash
 OLLAMA_KV_CACHE_TYPE=q8_0     # roughly halves the KV cache
 OLLAMA_FLASH_ATTENTION=1
-OLLAMA_NUM_PARALLEL=2         # unset means Ollama picks, which may exceed
-                              # what --concurrency assumes
+OLLAMA_NUM_PARALLEL=2         # unset resolves to 1 on a small host, so
+                              # --concurrency 2 just queues
 ```
 
 ---

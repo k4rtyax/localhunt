@@ -183,8 +183,9 @@ class OllamaClient:
 
             models = resp.json().get("models", [])
             names = [m.get("name", "") for m in models]
-            base = self.model.split(":")[0]
-            if not any(base == n.split(":")[0] for n in names):
+            # Ollama needs the exact tag; a base-name match passes the wrong build.
+            wanted = self.model if ":" in self.model else f"{self.model}:latest"
+            if wanted not in names:
                 available = ", ".join(names) or "none"
                 return False, (
                     f"Model '{self.model}' is not present on the server.\n"

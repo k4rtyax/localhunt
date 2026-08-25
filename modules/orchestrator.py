@@ -16,7 +16,7 @@ from typing import Callable
 
 from config import (
     CHUNK_TOKENS, CHUNK_OVERLAP_LINES, SWARM_CONCURRENCY,
-    VERIFIER_VOTES, MIN_CONFIDENCE, RESERVE_OUTPUT_TOKENS,
+    VERIFIER_VOTES, MIN_CONFIDENCE, RESERVE_OUTPUT_TOKENS, MERGE_SPAN_RATIO,
 )
 from modules.agents import (
     AgentSpec, SKEPTIC, SYNTHESIZER, select_agents,
@@ -25,7 +25,7 @@ from modules.agents import (
 from modules.schema import Finding, SEVERITIES
 from modules.textutil import (
     count_tokens, number_lines, window_by_lines, normalize_snippet, squash,
-    truncate,
+    evidence_span, truncate,
 )
 
 
@@ -148,6 +148,36 @@ def denies_taint_source(code: str, reason: str) -> bool:
     if _cites_neutraliser(reason):
         return False
     return bool(_DENIES_CONTROL.search(reason or ""))
+
+
+def _widest(a: tuple[int, int], b: tuple[int, int]) -> tuple[int, int]:
+    """The longer of two spans, which under containment is also their union."""
+    return a if (a[1] - a[0]) >= (b[1] - b[0]) else b
+
+
+def _same_construct(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """True when two evidence quotes point at one construct in the source."""
+    outer, inner = (a, b) if (a[1] - a[0]) >= (b[1] - b[0]) else (b, a)
+    if not (outer[0] <= inner[0] and inner[1] <= outer[1]):
+        return False
+    # Containment alone would let a quote of the whole file absorb everything
+    # in it, so the wider quote has to stay in proportion to the narrower.
+    return (outer[1] - outer[0]) <= max(1, inner[1] - inner[0]) * MERGE_SPAN_RATIO
+
+
+def _merge_order(f: Finding) -> tuple:
+    """Rank duplicates by severity, then by content so ties do not depend on
+    which agent happened to answer first."""
+    return (f.rank, -f.confidence, f.title, f.line, f.agent)
+
+
+def _absorb(winner: Finding, loser: Finding) -> Finding:
+    """Keep the worse-ranked of two duplicates, crediting both agents."""
+    if _merge_order(loser) < _merge_order(winner):
+        winner, loser = loser, winner
+    agents = {a for a in (winner.agent + "," + loser.agent).split(",") if a}
+    winner.agent = ",".join(sorted(agents))
+    return winner
 
 
 @dataclass
@@ -443,23 +473,39 @@ class Swarm:
                         f.confidence = min(f.confidence, 0.4)
             kept.append(f)
 
+        # Two agents reporting one issue rarely write the same title or the
+        # same category, so a key built from those almost never merges them.
+        # What they do agree on is the code they quoted, which sift has already
+        # checked against the source, so group by where the quote lands.
+        spanned: list[tuple[str, tuple[int, int], Finding]] = []
         merged: dict[tuple, Finding] = {}
         for f in kept:
-            key = f.dedupe_key()
-            existing = merged.get(key)
-            if existing is None:
-                merged[key] = f
-                continue
-            winner, loser = (
-                (f, existing)
-                if (f.rank, -f.confidence) < (existing.rank, -existing.confidence)
-                else (existing, f)
-            )
-            agents = {a for a in (winner.agent + "," + loser.agent).split(",") if a}
-            winner.agent = ",".join(sorted(agents))
-            merged[key] = winner
+            span = evidence_span(f.evidence, by_path.get(f.file, ""))
+            if span is None:
+                # Nothing to anchor to, including fabricated evidence. Fall
+                # back to the old key rather than merging on a guess.
+                key = f.dedupe_key()
+                merged[key] = _absorb(merged[key], f) if key in merged else f
+            else:
+                spanned.append((f.file, span, f))
 
-        out = list(merged.values())
+        # Widest quote first so grouping does not depend on which agent
+        # happened to return first. Identical spans are common, so the tie
+        # breaks on the finding itself rather than on arrival order.
+        spanned.sort(key=lambda item: (
+            item[0], item[1][0], -(item[1][1] - item[1][0]), _merge_order(item[2]),
+        ))
+        groups: list[list] = []
+        for path, span, f in spanned:
+            for group in groups:
+                if group[0] == path and _same_construct(group[1], span):
+                    group[1] = _widest(group[1], span)
+                    group[2] = _absorb(group[2], f)
+                    break
+            else:
+                groups.append([path, span, f])
+
+        out = list(merged.values()) + [g[2] for g in groups]
         out.sort(key=lambda f: (f.rank, -f.confidence, f.file, f.line))
         self._emit(
             "sift", "done",

@@ -116,8 +116,8 @@ with the verifier's own words in `verdict_reason`. Run stats count these as
 `verify_overridden`.
 
 Tuning lives in `config.py` and is commented there rather than here:
-`VERIFIER_VOTES`, `MIN_CONFIDENCE`, `SWARM_CONCURRENCY`, `NUM_CTX`,
-`RESERVE_OUTPUT_TOKENS`.
+`VERIFIER_VOTES`, `MIN_CONFIDENCE`, `MERGE_SPAN_RATIO`, `SWARM_CONCURRENCY`,
+`NUM_CTX`, `RESERVE_OUTPUT_TOKENS`.
 
 ### Resource notes
 

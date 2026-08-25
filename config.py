@@ -106,6 +106,14 @@ VERIFIER_VOTES = 1
 # Findings below this confidence are dropped before the verify phase.
 MIN_CONFIDENCE = 0.35
 
+# Duplicate findings are merged by where their evidence sits in the source, not
+# by what the agents called it. One agent quotes the statement and another
+# quotes the route around it, so the spans nest; the wider quote is treated as
+# the same construct while it stays within this multiple of the narrower one.
+# Measured on a 4-vulnerability fixture the widest genuine pair was 2.3x, so 4
+# leaves room without letting one greedy quote swallow a whole file.
+MERGE_SPAN_RATIO = 4
+
 # Keep the model resident between agent calls.
 KEEP_ALIVE = "10m"
 

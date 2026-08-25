@@ -130,6 +130,23 @@ def squash(text: str) -> str:
     return re.sub(r"\s+", "", text or "").lower()
 
 
+def evidence_span(evidence: str, source: str) -> tuple[int, int] | None:
+    """
+    Locate a quoted snippet inside the source it came from.
+
+    The span is in whitespace-stripped coordinates, so a quote the model
+    reflowed still lands on the code it copied. Returns None when the snippet
+    is too short to place or is not in the source at all.
+    """
+    needle = squash(evidence)
+    if len(needle) < 8:
+        return None
+    pos = squash(source).find(needle)
+    if pos < 0:
+        return None
+    return pos, pos + len(needle)
+
+
 def truncate(text: str, limit: int) -> str:
     text = text or ""
     return text if len(text) <= limit else text[: limit - 1] + "..."

@@ -108,10 +108,27 @@ _DENIES_CONTROL = re.compile(
 # sink, not denying the source, so it is left alone even if it also says the
 # value is not user-controlled by the time it lands.
 _NEUTRALISER = re.compile(
-    r"escap|sanitis|sanitiz|encod|validat|allow-?list|white-?list"
-    r"|textContent|createTextNode|DOMPurify",
+    r"(?<!un)(?:escap|sanitis|sanitiz|encod|validat)"
+    r"|allow-?list|white-?list|textContent|createTextNode|DOMPurify",
     re.IGNORECASE,
 )
+
+# "unescaped", "not escaped" and "does not receive or validate" all name the
+# step that is missing. Reading those as a neutralising step let a refutation
+# through that the guard exists to catch, so a negated one does not count.
+_NEGATION = re.compile(
+    r"\b(?:not|never|no|without|lacks?|missing|absent|neither|nor|fails?\s+to)\b"
+    r"(?:\s+\w+){0,4}\s*$",
+    re.IGNORECASE,
+)
+
+
+def _cites_neutraliser(reason: str) -> bool:
+    """True when the reason credits an escape or encode that is actually there."""
+    for m in _NEUTRALISER.finditer(reason or ""):
+        if not _NEGATION.search(reason[:m.start()]):
+            return True
+    return False
 
 
 def refuses_on_context(reason: str) -> bool:
@@ -128,7 +145,7 @@ def denies_taint_source(code: str, reason: str) -> bool:
     """True when a refutation calls a browser-side taint source uncontrolled."""
     if not _TAINT_SOURCE.search(code or ""):
         return False
-    if _NEUTRALISER.search(reason or ""):
+    if _cites_neutraliser(reason):
         return False
     return bool(_DENIES_CONTROL.search(reason or ""))
 

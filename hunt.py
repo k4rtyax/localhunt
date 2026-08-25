@@ -327,6 +327,16 @@ def cmd_knowledge(do_list, add_file, query, clear, host, top_k):
     )
 
 
+_MODE_AGENTS = {
+    "secrets": "secrets-hunter",
+    "xss": "xss-hunter",
+    "sqli": "sqli-hunter",
+    "endpoints": "endpoint-mapper",
+    "obfuscated": "deobfuscator",
+    "full": None,
+}
+
+
 @cli.command("scan")
 @click.option("--file", "-f", "filepath", default=None, help="Target file path")
 @click.option("--dir", "-d", "directory", default=None, help="Target directory path")
@@ -345,186 +355,40 @@ def cmd_knowledge(do_list, add_file, query, clear, host, top_k):
 @click.option("--no-recursive", is_flag=True, help="Disable recursive directory traversal")
 @click.option("--host", default=None, help="Ollama host URL")
 @click.option("--model", default=DEFAULT_MODEL, show_default=True, help="Model name")
-def cmd_scan(filepath, directory, mode, use_rag, top_k, ext, output, stream,
+@click.pass_context
+def cmd_scan(ctx, filepath, directory, mode, use_rag, top_k, ext, output, stream,
              no_recursive, host, model):
-    """Analyze file or directory for security vulnerabilities."""
+    """Deprecated alias for swarm, which fits each file to the context window."""
     if not filepath and not directory:
-        console.print("[red]Specify --file or --dir[/red]")
+        err_console.print("[red]Specify --file or --dir[/red]")
         sys.exit(1)
 
-    url = host or OLLAMA_BASE_URL
-    reporter = Reporter()
-    reporter.print_banner(model, url)
+    agent = _MODE_AGENTS.get(mode.lower())
+    target = f"-f {filepath}" if filepath else f"-d {directory}"
+    equivalent = f"swarm {target}" + (f" -a {agent}" if agent else "")
 
-    analyzer = Analyzer(model=model, base_url=url)
-    ok, msg = analyzer.check_ollama()
-    if not ok:
-        reporter.print_connection_error(msg)
-        sys.exit(1)
-    reporter.print_connection_ok(url, model)
-
-    rag_engine = None
-    if use_rag:
-        try:
-            rag_engine = get_rag_engine(url, EMBEDDING_MODEL)
-        except RAGUnavailable as e:
-            console.print("[yellow]" + str(e) + "[/yellow]")
-            console.print("[dim]Running without RAG.[/dim]")
-        else:
-            kb_count = rag_engine.count()
-            if kb_count == 0:
-                console.print("[yellow]Warning: RAG requested but knowledge base is empty.[/yellow]")
-            else:
-                console.print(f"RAG active ({kb_count} chunks, top-k: {top_k})")
-
-    extensions = list(ext) if ext else None
-    scanner = Scanner(extensions=extensions)
-
-
-    if filepath:
-        file_info = scanner.scan_file(filepath)
-        if not file_info or file_info.get("error"):
-            reporter.print_error(file_info.get("error", "Failed to read file"))
-            sys.exit(1)
-
-        rag_context = None
-        if rag_engine and rag_engine.count() > 0:
-            with console.status("[dim]Retrieving knowledge base context...[/dim]"):
-                query = f"{mode} analysis {file_info['name']}: {file_info['content'][:500]}"
-                rag_context = rag_engine.format_context(query, top_k=top_k)
-
-        reporter.print_file_header(
-            file_info["name"], file_info["size"], mode,
-            file_info.get("truncated", False)
+    err_console.print(
+        "[yellow]scan is deprecated and now runs the swarm.[/yellow]"
+    )
+    err_console.print(f"[dim]Equivalent: hunt.py {equivalent}[/dim]")
+    if stream:
+        err_console.print(
+            "[dim]--stream has no swarm equivalent and is ignored.[/dim]"
         )
 
-        full_response = []
-        try:
-            if stream:
-                reporter.stream_start()
-                for chunk in analyzer.analyze_stream(
-                    file_info["content"],
-                    mode=mode,
-                    filename=file_info["name"],
-                    rag_context=rag_context,
-                ):
-                    console.print(chunk, end="", markup=False)
-                    full_response.append(chunk)
-                console.print()
-            else:
-                with console.status(f" [cyan]Analyzing {file_info['name']}...[/cyan]"):
-                    for chunk in analyzer.analyze_stream(
-                        file_info["content"],
-                        mode=mode,
-                        filename=file_info["name"],
-                        rag_context=rag_context,
-                    ):
-                        full_response.append(chunk)
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Execution interrupted by user.[/yellow]")
-            sys.exit(0)
-        except Exception as e:
-            reporter.print_error(f"Analysis failed: {e}")
-            sys.exit(1)
-
-        full_text = "".join(full_response)
-        saved_path = reporter.save_single_report(
-            filename=file_info["name"],
-            mode=mode,
-            content=full_text,
-            rag_used=(rag_context is not None),
-            output_path=output,
-        )
-
-        summary = reporter.parse_summary(full_text)
-        reporter.print_analysis_summary(file_info["name"], saved_path, summary)
-
-
-    elif directory:
-        dir_path = Path(directory)
-        if not dir_path.exists():
-            reporter.print_error(f"Directory not found: {directory}")
-            sys.exit(1)
-
-        recursive = not no_recursive
-        with console.status("[dim]Counting files...[/dim]"):
-            total = scanner.count_files(dir_path, recursive)
-
-        if total == 0:
-            reporter.print_warning(f"No matching files found in {directory}")
-            return
-
-        reporter.print_dir_summary(directory, total, mode)
-
-        all_results = []
-        all_summaries = []
-        scanned = 0
-        errors = 0
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("[cyan]Scanning...", total=total)
-
-            for file_info in scanner.scan_directory(dir_path, recursive):
-                if file_info.get("error"):
-                    reporter.print_skipped(file_info.get("path", "?"), file_info["error"])
-                    errors += 1
-                    progress.advance(task)
-                    continue
-
-                progress.update(task, description=f"[cyan]Analyzing: {file_info['name'][:40]}")
-
-                rag_context = None
-                if rag_engine and rag_engine.count() > 0:
-                    query = f"{mode} {file_info['name']}: {file_info['content'][:300]}"
-                    rag_context = rag_engine.format_context(query, top_k=top_k)
-
-                full_response = []
-                try:
-                    for chunk in analyzer.analyze_stream(
-                        file_info["content"],
-                        mode=mode,
-                        filename=file_info["name"],
-                        rag_context=rag_context,
-                    ):
-                        full_response.append(chunk)
-                except KeyboardInterrupt:
-                    console.print("\n[yellow]Execution interrupted by user.[/yellow]")
-                    break
-                except Exception as e:
-                    reporter.print_error(f"{file_info['name']}: {e}")
-                    errors += 1
-                    progress.advance(task)
-                    continue
-
-                full_text = "".join(full_response)
-                file_report_path = reporter.save_single_report(
-                    filename=file_info["name"],
-                    mode=mode,
-                    content=full_text,
-                    rag_used=(rag_context is not None),
-                )
-
-                summary = reporter.parse_summary(full_text)
-                all_summaries.append(summary)
-
-                all_results.append({
-                    "filename": file_info["name"],
-                    "mode": mode,
-                    "content": full_text,
-                    "rag_used": (rag_context is not None),
-                    "report_path": file_report_path,
-                })
-                scanned += 1
-                progress.advance(task)
-
-        combined_report_path = reporter.save_dir_report(all_results, output_path=output)
-        reporter.print_dir_summary_panel(scanned, combined_report_path, all_summaries)
+    ctx.invoke(
+        cmd_swarm,
+        filepath=filepath,
+        directory=directory,
+        only_agents=(agent,) if agent else (),
+        use_rag=use_rag,
+        top_k=top_k,
+        ext=ext,
+        no_recursive=no_recursive,
+        output=output,
+        host=host,
+        model=model,
+    )
 
 
 @cli.command("chat")

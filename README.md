@@ -100,13 +100,17 @@ is the cheapest way to catch a model that invented its evidence.
 | `refuted`    | The skeptic showed the flaw is not present; the finding moves to `refuted`  |
 | `unverified` | The refutation was thrown out, or the verifier crashed; the finding is kept |
 
-A refutation is thrown out on either of two grounds. The first is resting on
+A refutation is thrown out on one of three grounds. The first is resting on
 what the file _is_ rather than on what the code _does_: a demo, a test, a
 fixture, not production, or a secret excused because the file is a `.env` that
 nobody committed. The second is contradicting itself, since a 4B skeptic will
 reason its way to "the finding is real" and then return a refutation anyway.
-The skeptic prompt directs the first judgement to `adjusted_severity` instead,
-but the model ignores the rule often enough that both are enforced in code.
+The third is denying that a browser-side value is attacker-controlled: the
+model reads `location.search`, `document.referrer` and `window.name` as safe
+because they are not `req.query`, which deletes real DOM XSS. A refutation that
+argues about the sink instead, naming an escape or an encode, is left alone.
+The skeptic prompt states all three, but the model ignores the rules often
+enough that they are enforced in code as well.
 The proposed severity is still applied, so the finding survives at a lower rank
 with the verifier's own words in `verdict_reason`. Run stats count these as
 `verify_overridden`.

@@ -380,6 +380,19 @@ Set "real": true when the shown code does contain the flaw - INCLUDING when:
 - You cannot see the caller. Say so in "reason" and lower the severity.
 - The project looks small, unfinished, or not production code.
 
+Attacker-controlled input is NOT limited to server request fields. In browser
+code the URL and the surrounding page are attacker-controlled too, because the
+attacker is whoever sends the victim the link:
+
+  location.search, location.hash, location.href, location.pathname
+  new URLSearchParams(location.search), document.URL, document.baseURI
+  document.referrer, window.name, and the data on a "message" event
+
+A value read from any of those is attacker-controlled. "It does not come from
+req.query" describes where the taint entered, it does not refute a DOM XSS
+finding. Refute such a finding only on the sink: the value is escaped, encoded,
+or written through textContent rather than innerHTML.
+
 Do not name the vendor a credential belongs to unless the prefix is one you
 are certain of. Which company issued a key has no bearing on whether it is
 hardcoded, and a wrong guess makes the whole verdict untrustworthy.
@@ -390,10 +403,13 @@ the following, the correct answer is true with a lowered "adjusted_severity":
   - the file is a demo, sample, test, fixture, or example
   - the project is small, unfinished, or not production code
   - the code is deliberately vulnerable
+  - a browser-side URL or page value is safe because it is not a server
+    request field
 
-Those are statements about context, not about the code. A refutation resting
-on them is discarded automatically and the finding is kept for a human to
-read, so answering false on those grounds gains nothing.
+The first three are statements about context, not about the code. The fourth
+is a mistake about taint. A refutation resting on any of them is discarded
+automatically and the finding is kept for a human to read, so answering false
+on those grounds gains nothing.
 
 When the technical claim is genuinely ambiguous, answer false and explain what
 extra code you would need to see. Put your real reasoning in "reason".

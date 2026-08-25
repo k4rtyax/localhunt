@@ -74,6 +74,46 @@ _ASSERTS_REAL = re.compile(
 )
 
 
+# Browser-side taint sources. A value read from one of these is controlled by
+# whoever sends the victim the link, which is exactly what attacker-controlled
+# means for DOM XSS. qwen3:4b reads them as safe because they are not req.query
+# and refutes real findings on that basis, so the point is enforced here as
+# well as stated in the skeptic prompt.
+_TAINT_SOURCE = re.compile(
+    r"(?:\b(?:window|document|self|top|parent)\s*\.\s*)?"
+    r"\blocation\s*\.\s*(?:search|hash|href|pathname|origin)"
+    r"|\bURLSearchParams"
+    r"|\bdocument\s*\.\s*(?:URL|documentURI|baseURI|referrer)"
+    r"|\bwindow\s*\.\s*name\b"
+    r"|addEventListener\s*\(\s*[\"']message[\"']"
+    r"|onmessage\s*=",
+    re.IGNORECASE,
+)
+
+# The denial itself: the value is not user input, or did not come from the
+# request. Only these forms turned up in practice; a refutation that argues
+# about the sink instead is a legitimate one and must survive.
+_DENIES_CONTROL = re.compile(
+    r"(?:"
+    r"not\s+(?:\w+\s+){0,3}?(?:user|attacker|externally|client)[\s-]*"
+    r"(?:controlled|controllable|supplied|provided|influenced)"
+    r"|not\s+(?:\w+\s+){0,4}?(?:derived\s+from|coming\s+from|come\s+from|from)\s+"
+    r"(?:the\s+|a\s+)?(?:request|req\b|user\s+input|query|http)"
+    r"|not\s+(?:\w+\s+){0,2}?(?:tainted|untrusted)"
+    r")",
+    re.IGNORECASE,
+)
+
+# A refutation naming a neutralising step is arguing about the path to the
+# sink, not denying the source, so it is left alone even if it also says the
+# value is not user-controlled by the time it lands.
+_NEUTRALISER = re.compile(
+    r"escap|sanitis|sanitiz|encod|validat|allow-?list|white-?list"
+    r"|textContent|createTextNode|DOMPurify",
+    re.IGNORECASE,
+)
+
+
 def refuses_on_context(reason: str) -> bool:
     """True when a refutation rests on what the file IS rather than what it does."""
     return bool(_OUT_OF_BOUNDS.search(reason or ""))
@@ -82,6 +122,15 @@ def refuses_on_context(reason: str) -> bool:
 def asserts_real(reason: str) -> bool:
     """True when a refutation's own words conclude the finding is real."""
     return bool(_ASSERTS_REAL.search(reason or ""))
+
+
+def denies_taint_source(code: str, reason: str) -> bool:
+    """True when a refutation calls a browser-side taint source uncontrolled."""
+    if not _TAINT_SOURCE.search(code or ""):
+        return False
+    if _NEUTRALISER.search(reason or ""):
+        return False
+    return bool(_DENIES_CONTROL.search(reason or ""))
 
 
 @dataclass
@@ -462,9 +511,10 @@ class Swarm:
         )
 
         if finding.verdict == "refuted":
-            # A refutation may only rest on what the code does. Two kinds are
-            # thrown out: one that argues from what the file is, and one whose
-            # own reasoning concludes the finding is real.
+            # A refutation may only rest on what the code does. Three kinds are
+            # thrown out: one that argues from what the file is, one whose own
+            # reasoning concludes the finding is real, and one that denies a
+            # browser-side taint source is attacker-controlled.
             out_of_bounds = [
                 v for v in votes
                 if not v["real"] and refuses_on_context(v["reason"])
@@ -473,17 +523,25 @@ class Swarm:
                 v for v in votes
                 if not v["real"] and asserts_real(v["reason"])
             ]
-            rejected = out_of_bounds or contradicts_itself
+            shown = finding.evidence + "\n" + context
+            denies_taint = [
+                v for v in votes
+                if not v["real"] and denies_taint_source(shown, v["reason"])
+            ]
+            rejected = out_of_bounds or contradicts_itself or denies_taint
             if rejected:
                 for v in rejected:
                     v["policy_override"] = True
                 finding.verdict = "unverified"
-                grounds = (
-                    "Refuted on out-of-bounds grounds (what the file is, not "
-                    "what the code does)"
-                    if out_of_bounds else
-                    "The refutation's own reasoning concludes the finding is real"
-                )
+                if out_of_bounds:
+                    grounds = ("Refuted on out-of-bounds grounds (what the file "
+                               "is, not what the code does)")
+                elif contradicts_itself:
+                    grounds = ("The refutation's own reasoning concludes the "
+                               "finding is real")
+                else:
+                    grounds = ("Refuted by denying that a browser-side URL or "
+                               "page value is attacker-controlled")
                 finding.verdict_reason = (
                     grounds
                     + ", so the refutation was discarded and this finding is "

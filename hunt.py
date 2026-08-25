@@ -23,7 +23,6 @@ from config import (
 from modules.analyzer import Analyzer
 from modules.scanner import Scanner
 from modules.reporter import Reporter, err_console
-from modules.prompts import AVAILABLE_MODES
 
 # Redirected stdout defaults to cp1252 on Windows, which cannot encode the
 # spinner glyphs rich emits.
@@ -343,7 +342,7 @@ _MODE_AGENTS = {
 @click.option(
     "--mode", "-m",
     default="full",
-    type=click.Choice(AVAILABLE_MODES, case_sensitive=False),
+    type=click.Choice(list(_MODE_AGENTS), case_sensitive=False),
     show_default=True,
     help="Analysis mode"
 )

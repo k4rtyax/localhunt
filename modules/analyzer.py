@@ -1,15 +1,13 @@
 """
 lokalHunt - Analyzer Module
-Mode-driven analysis for the `scan` and `chat` commands. Thin layer over
-OllamaClient: it owns the prompt, the client owns the transport.
-Supports RAG context injection from the knowledge base.
+Backs the interactive `chat` command. Thin layer over OllamaClient: it owns
+the prompt, the client owns the transport.
 """
 
 from typing import Generator
 from config import OLLAMA_BASE_URL, DEFAULT_MODEL
 from modules.llm import OllamaClient
 from modules.prompts import get_prompt
-from modules.textutil import number_lines
 
 
 class Analyzer:
@@ -30,37 +28,6 @@ class Analyzer:
         """Check if Ollama is running and the model is available."""
         with self._client() as client:
             return client.check()
-
-    def analyze_stream(
-        self,
-        content: str,
-        mode: str = "full",
-        filename: str = "unknown",
-        rag_context: str | None = None,
-    ) -> Generator[str, None, None]:
-        """
-        Stream analysis from Ollama. Yields text chunks as they arrive.
-        rag_context: optional context string from knowledge base (RAG).
-        """
-        system_prompt = get_prompt(mode)
-
-        if rag_context:
-            system_prompt = system_prompt + "\n\n" + rag_context
-
-        user_message = (
-            f"Analyze this file for security vulnerabilities.\n"
-            f"Filename: {filename}\n\n"
-            f"```\n{number_lines(content)}\n```"
-        )
-
-        with self._client() as client:
-            yield from client.chat_stream(
-                [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                temperature=0.2,
-            )
 
     def chat_stream(
         self,
